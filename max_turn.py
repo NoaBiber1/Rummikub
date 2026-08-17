@@ -92,7 +92,7 @@ def solve_rummikub_turn(table_tiles, hand_tiles, table_jokers=0, hand_jokers=0):
         "status": status,
         "num_of_tiles_played": int(pulp.value(prob.objective)),
         "played_tiles": played_tiles_list,
-        "played_jokers_count": played_jokers_count,
+        "num_of_jokers_played": played_jokers_count,
         "joker_acting_as": joker_substitutions,
         "new_board": chosen_sets
     }
