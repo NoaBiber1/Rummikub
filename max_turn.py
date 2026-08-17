@@ -79,10 +79,20 @@ def solve_rummikub_turn(table_tiles, hand_tiles, table_jokers=0, hand_jokers=0):
         if z[t].varValue and z[t].varValue > 0:
             for _ in range(int(z[t].varValue)):
                 joker_substitutions.append(t)
-            
+    
+    played_tiles_list = []
+    for t in TILES:
+        if y[t].varValue and y[t].varValue > 0:
+            for _ in range(int(y[t].varValue)):
+                played_tiles_list.append(t)
+
+    played_jokers_count = int(y_J.varValue) if y_J.varValue else 0
+
     return {
         "status": status,
         "num_of_tiles_played": int(pulp.value(prob.objective)),
+        "played_tiles": played_tiles_list,
+        "played_jokers_count": played_jokers_count,
         "joker_acting_as": joker_substitutions,
         "new_board": chosen_sets
     }
