@@ -225,7 +225,7 @@ class ILP_solutions:
             kind must be one of "tiles", "value", "tiles_then_value",
             "value_then_tiles".
         """
-        self.category_quotas = category_quotas or DEFAULT_CATEGORY_QUOTAS
+        self.category_quotas = category_quotas or TRAINING_CATEGORY_QUOTAS
         self.valid_sets = self.generate_valid_sets()  # all valid melds in rummikub
         self.reset(hand_tails=None, board_tails=None)
 
