@@ -4,7 +4,7 @@ from  .valid_solutions.ilp_solution import ILP_solutions
 class GE:
     def __init__(self, players):
         self.players = players
-        self.ilp_solver = ILP_solutions() #TRAINING_CATEGORY_QUOTAS (this is the default)
+        self.ilp_solver = ILP_solutions()
         self.reset()
         
 
@@ -12,23 +12,18 @@ class GE:
         action = x[-53:]
         act_sum = action.sum().item()
 
-        # if remove one or more tails from hand
         if act_sum > 0:
             self.board += action
             self.hands[self.turn] -= action
-        # if the action was take a tail from deck
         elif act_sum == -1:
             self.hands[self.turn] -= action
-        # eligal move
         else:
-            exit(1)
+            raise ValueError(f"illegal action passed to play(): act_sum={act_sum} (must be >0 or -1)")
 
-        #check if game is end by hand
         done_by_hand = self.hands[self.turn].sum().item()
         if done_by_hand == 0:
             self.done = True
             self.winner = self.turn
-        #check if done by deck
         if self.pointer >= self.deck.shape[0]:
             self.done = True
 
@@ -43,10 +38,8 @@ class GE:
         return torch.sum(self.hands[player] * weights)
 
     def update_reward(self):
-        #no winner
         if not self.done:
             return
-        #winner that finish is hand
         if self.winner != -1:
             total = 0.0
             for i in range(0, self.players):
@@ -54,7 +47,6 @@ class GE:
                     self.reward[i] = - self.hand_score(i)
                     total -= self.reward[i]
             self.reward[self.winner] = total
-        #winner by finished deck
         else: 
             scores = torch.stack([self.hand_score(i) for i in range(self.players)])
             winner_idx = torch.argmin(scores)
@@ -71,22 +63,30 @@ class GE:
         self.update_reward()
         return self.reward[player]
 
+    def get_winner(self):
+        if not self.done:
+            return None
+        if self.winner != -1:
+            return self.winner
+        scores = torch.stack([self.hand_score(i) for i in range(self.players)])
+        return int(torch.argmin(scores).item())
+
     def shuffle(self):
         perm = torch.randperm(self.deck.shape[0])
         self.deck = self.deck[perm]
         self.pointer = 0
 
     def draw(self, n=1):
-            if self.pointer + n > self.deck.shape[0]:
-                raise RuntimeError("deck exhausted")
-    
-            tails = self.deck[self.pointer: self.pointer + n]
-            self.pointer += n
-            return tails
+        if self.pointer + n > self.deck.shape[0]:
+            raise RuntimeError("deck exhausted")
+
+        tails = self.deck[self.pointer: self.pointer + n]
+        self.pointer += n
+        return tails
 
     def init_handes(self):
         tails = self.draw(self.players*14).view(self.players, 14)
-        draws = torch.ones_like(tails)
+        draws = torch.ones_like(tails, dtype=self.hands.dtype)
         self.hands.scatter_add_(1, tails, draws)
 
     def reset(self):
@@ -113,28 +113,15 @@ class GE:
             action = torch.tensor(entry["dropped_vector"], dtype=torch.float32)
             x = torch.cat([self.board, hand, action])
             valid_x_list.append(x)
-        # when there is no move draw a tail from deck
         if not valid_x_list:
             try:
                 drawn = self.draw(1)
             except RuntimeError:
+                self.done = True
                 return valid_x_list
             action = torch.zeros(53)
             action[drawn] -= 1 
             x = torch.cat([self.board, hand, action])
-            valid_x_list.append(x)
-        return valid_x_list                                           
-        
+            valid_x_list = [x]
 
-
-            
-
-
-
-            
-
-
-
-    
-
-        
+        return valid_x_list
