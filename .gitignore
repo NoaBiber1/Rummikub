@@ -1,0 +1,11 @@
+# Nested frontend git metadata kept locally only
+.git_nested_backup/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db

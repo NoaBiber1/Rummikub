@@ -1,0 +1,38 @@
+name: rummikub_assistant
+description: A mobile app that recognizes Rummikub tiles and calculates optimal moves.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UUID generation for tiles and sets
+  uuid: ^4.0.0
+  
+  # State management
+  provider: ^6.1.0
+  
+  # Firebase
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+  cloud_firestore: ^6.8.0
+  firebase_ui_auth: ^3.1.0
+  
+  # HTTP for API calls
+  http: ^1.1.0
+  
+  # Image handling
+  image_picker: ^1.0.5
+  camera: ^0.12.0+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /games_history/{gameId} {
+      allow read: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.user_id == request.auth.uid;
+    }
+
+    match /global_arena/{challengeId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+    }
+
+    match /vision_corrections/{correctionId} {
+      allow create: if signedIn();
+      allow read: if signedIn();
+    }
+
+    match /arena_attempts/{attemptId} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.user_id == request.auth.uid;
+    }
+  }
+}

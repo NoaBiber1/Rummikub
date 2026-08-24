@@ -1,0 +1,55 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          },
+          {
+            "key": "Cross-Origin-Embedder-Policy",
+            "value": "credentialless"
+          },
+          {
+            "key": "Cross-Origin-Opener-Policy",
+            "value": "same-origin"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "rummikub-solver-360e1",
+          "configurations": {
+            "android": "1:114010132422:android:3c4cf41fcbe8f9ce7cacc7",
+            "ios": "1:114010132422:ios:999df31ed9d0fc547cacc7",
+            "macos": "1:114010132422:ios:f6f460c16a994dd37cacc7",
+            "web": "1:114010132422:web:b1329c80626f0fd07cacc7",
+            "windows": "1:114010132422:web:c79550acbc96b0487cacc7"
+          }
+        }
+      }
+    }
+  }
+}
