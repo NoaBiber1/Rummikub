@@ -1,5 +1,8 @@
 import torch
 
+def _as_tensor(x):
+    return x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
+
 def soft_update_target(online_net, target_net, tau):
     with torch.no_grad():
         for target_param, online_param in zip(target_net.parameters(), online_net.parameters()):
@@ -41,3 +44,37 @@ def train_step(online_net, target_net ,x,reward, next_pos_x=None, done=False, ga
         soft_update_target(online_net, target_net, tau)
 
     return q_pred.item(), loss.item()
+
+def train_step_batch(online_net, target_net, batch, gamma=0.99, lr=0.001, tau=0.005):
+    for param_group in online_net.optimizer.param_groups:
+        param_group['lr'] = lr
+
+    xs, rewards, next_pos_xs, dones = zip(*batch)
+    x_batch = torch.stack([_as_tensor(x) for x in xs])
+
+    with torch.no_grad():
+        counts = [len(n) for n in next_pos_xs]
+        flat_next = [_as_tensor(s) for n in next_pos_xs for s in n]
+        if flat_next:
+            flat_q = target_net(torch.stack(flat_next)).squeeze(-1)
+            chunks = torch.split(flat_q, counts)
+            max_q_next = torch.tensor(
+                [c.max().item() if c.numel() > 0 else 0.0 for c in chunks],
+                dtype=torch.float32,
+            )
+        else:
+            max_q_next = torch.zeros(len(batch), dtype=torch.float32)
+
+    reward_t = torch.tensor(rewards, dtype=torch.float32)
+    done_t = torch.tensor(dones, dtype=torch.bool)
+    target = torch.where(done_t, reward_t, reward_t + gamma * max_q_next).unsqueeze(1)
+
+    online_net.optimizer.zero_grad()
+    q_pred = online_net.forward(x_batch)
+
+    loss = ((q_pred - target) ** 2).mean()
+    loss.backward()
+    online_net.optimizer.step()
+    soft_update_target(online_net, target_net, tau)
+
+    return q_pred.mean().item(), loss.item()

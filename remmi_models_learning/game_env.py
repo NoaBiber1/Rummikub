@@ -1,5 +1,5 @@
 import torch
-from  .valid_solutions.ilp_solution import ILP_solutions
+from  valid_solutions.ilp_solution import ILP_solutions
 
 class GE:
     def __init__(self, players):
@@ -15,10 +15,11 @@ class GE:
         if act_sum > 0:
             self.board += action
             self.hands[self.turn] -= action
-        elif act_sum == -1:
-            self.hands[self.turn] -= action
+        elif act_sum == 0:
+            tail = self.draw(1)
+            self.hands[self.turn][tail] += 1 
         else:
-            raise ValueError(f"illegal action passed to play(): act_sum={act_sum} (must be >0 or -1)")
+            raise ValueError(f"illegal action passed to play(): act_sum={act_sum} (must be >0 or ==0)")
 
         done_by_hand = self.hands[self.turn].sum().item()
         if done_by_hand == 0:
@@ -106,22 +107,19 @@ class GE:
             hand_tails=hand.round().int().tolist(),
             board_tails=self.board.round().int().tolist(),
         )
-        _, flat = self.ilp_solver.get_action_set()
+        flat = self.ilp_solver.build_action_set()
  
         valid_x_list = []
         for entry in flat:
             action = torch.tensor(entry["dropped_vector"], dtype=torch.float32)
             x = torch.cat([self.board, hand, action])
             valid_x_list.append(x)
+
+        if self.pointer < self.deck.shape[0]:
+            draw_x = torch.cat([self.board, hand, torch.zeros(53)])
+            valid_x_list.append(draw_x)
+
         if not valid_x_list:
-            try:
-                drawn = self.draw(1)
-            except RuntimeError:
-                self.done = True
-                return valid_x_list
-            action = torch.zeros(53)
-            action[drawn] -= 1 
-            x = torch.cat([self.board, hand, action])
-            valid_x_list = [x]
+            self.done = True
 
         return valid_x_list
