@@ -1,5 +1,5 @@
 import torch
-from  valid_solutions.ilp_solution import ILP_solutions
+from  ilp_solution import ILP_solutions
 
 class GE:
     def __init__(self, players):
@@ -62,7 +62,7 @@ class GE:
 
     def get_reward(self, player):
         self.update_reward()
-        return self.reward[player]
+        return self.reward[player] / 100
 
     def get_winner(self):
         if not self.done:

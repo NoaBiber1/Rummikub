@@ -109,28 +109,49 @@ def _print_progress(itr, total_episodes, history, args):
         f"avg_Q={_nanmean(qs):.3f}"
     )
 
-def _print_random_eval(episode, win_rate, avg_reward, n):
+def _win_rate_se(win_rate_pct, n):
+    """Standard error of a win rate given as a percentage, n games."""
+    if n == 0 or win_rate_pct != win_rate_pct:  # n==0 or NaN
+        return float("nan")
+    p = win_rate_pct / 100.0
+    return math.sqrt(p * (1.0 - p) / n) * 100.0
+
+def _reward_se(rewards):
+    """Standard error of the mean of a reward sample."""
+    n = len(rewards)
+    if n <= 1:
+        return float("nan")
+    return float(np.std(rewards, ddof=1) / np.sqrt(n))
+
+def _print_random_eval(episode, win_rate, avg_reward, n, win_rate_se=None, reward_se=None):
+    # Avg reward leads: it's the primary comparison metric (far lower variance
+    # per game than a binary win/loss, and win rate saturates once the agent
+    # reliably beats random, at which point it stops discriminating between
+    # configs). Win rate stays as a secondary sanity check.
+    win_rate_se = _win_rate_se(win_rate, n) if win_rate_se is None else win_rate_se
+    reward_str = f"avg_reward={avg_reward:.2f}"
+    if reward_se is not None and reward_se == reward_se:  # not NaN
+        reward_str += f" (SE +/-{reward_se:.2f})"
+    win_str = f"win_rate={win_rate:.1f}%"
+    if win_rate_se == win_rate_se:  # not NaN
+        win_str += f" (SE +/-{win_rate_se:.1f}%)"
     print(
         f"[random-eval @ episode {episode:>6}] "
-        f"win_rate={win_rate:.1f}% | avg_reward={avg_reward:.2f} (n={n})"
+        f"{reward_str} | {win_str} (n={n})"
     )
 
 def _print_summary(history, title):
     n = len(history["episode_rewards"])
     wins = [w for w in history["wins"] if w is not None]
     win_rate = (sum(wins) / len(wins) * 100.0) if wins else float("nan")
-    win_rate_se = (
-        math.sqrt((win_rate / 100.0) * (1.0 - win_rate / 100.0) / len(wins)) * 100.0
-        if wins else float("nan")
-    )
+    win_rate_se = _win_rate_se(win_rate, len(wins))
     avg_reward = float(np.mean(history["episode_rewards"])) if n else float("nan")
-    reward_se = (
-        float(np.std(history["episode_rewards"], ddof=1) / np.sqrt(n))
-        if n > 1 else float("nan")
-    )
+    reward_se = _reward_se(history["episode_rewards"])
     print(f"\n=== {title} ({n} episodes) ===")
-    print(f"  win rate       : {win_rate:.1f}% (SE +/-{win_rate_se:.1f}%)")
+    # Avg reward first: primary metric for comparing configs (see note in
+    # _print_random_eval). Win rate is the secondary sanity-check line.
     print(f"  avg reward     : {avg_reward:.2f} (SE +/-{reward_se:.2f})")
+    print(f"  win rate       : {win_rate:.1f}% (SE +/-{win_rate_se:.1f}%)")
     print(f"  avg game length: {np.mean(history['turns']):.1f} main-player turns")
     print(f"  avg loss       : {_nanmean(history['avg_losses']):.4f}")
     print(f"  avg Q value    : {_nanmean(history['avg_qs']):.3f}\n")
@@ -173,17 +194,23 @@ def plot_training_curves(history, save_path=None, title="training progress", rew
     if random_eval:
         re_episodes = [e["episode"] for e in random_eval]
         re_win = [e["win_rate"] for e in random_eval]
+        re_win_se = [e.get("win_rate_se", float("nan")) for e in random_eval]
         re_reward = [e["avg_reward"] for e in random_eval]
+        re_reward_se = [e.get("avg_reward_se", float("nan")) for e in random_eval]
     else:
-        re_episodes, re_win, re_reward = [], [], []
+        re_episodes, re_win, re_win_se, re_reward, re_reward_se = [], [], [], [], []
 
-    axes[1].plot(re_episodes, re_win, marker="o", color="tab:green")
+    # Win rate is the secondary/sanity-check panel now (see _print_summary);
+    # avg reward (below, axes[2]) is the primary comparison metric.
+    axes[1].errorbar(re_episodes, re_win, yerr=re_win_se, marker="o",
+                      color="tab:green", capsize=3)
     axes[1].set_ylabel("vs-random\nwin rate (%)")
     axes[1].set_ylim(-5, 105)
     axes[1].set_xlabel("episode")
 
-    axes[2].plot(re_episodes, re_reward, marker="o", color="tab:purple")
-    axes[2].set_ylabel("vs-random\navg reward")
+    axes[2].errorbar(re_episodes, re_reward, yerr=re_reward_se, marker="o",
+                      color="tab:purple", capsize=3)
+    axes[2].set_ylabel("vs-random\navg reward (primary)")
     axes[2].set_xlabel("episode")
 
     loss_window = max(1, len(episodes) // 50)
@@ -229,7 +256,25 @@ def run_self_play_training(args, players=2, gamma=0.99, lr=0.001, tau=0.005, qui
     }
     start_time = time.time()
 
+    seeds = getattr(args, "seeds", None)
+
     for itr in range(1, args.episodes + 1):
+        if seeds is not None:
+            # Common random numbers: pin BOTH RNG streams that affect this
+            # episode before it starts. torch controls GE.shuffle() (deck
+            # order / who gets which hand); numpy controls select_x()'s
+            # epsilon-greedy draws (which opponent/exploration move gets
+            # taken). Seeding only one (a common mistake - see section 2 of
+            # the project notes) still lets the other stream diverge and
+            # silently reintroduces the variance this is meant to remove.
+            # Two configs evaluated with the same seeds list see identical
+            # deck luck for episode itr; if their trained policies choose
+            # the same actions they also see identical opponent-random
+            # branches, so leftover variance in the comparison is genuinely
+            # attributable to the policies, not to who got luckier tiles.
+            seed = seeds[(itr - 1) % len(seeds)]
+            torch.manual_seed(seed)
+            np.random.seed(seed)
         ge.reset()
         main_player = itr % players
  
@@ -322,15 +367,22 @@ def run_self_play_training(args, players=2, gamma=0.99, lr=0.001, tau=0.005, qui
             )
             eval_wins = [w for w in eval_history["wins"] if w is not None]
             eval_win_rate = (sum(eval_wins) / len(eval_wins) * 100.0) if eval_wins else float("nan")
+            eval_win_rate_se = _win_rate_se(eval_win_rate, len(eval_wins))
             eval_rewards = eval_history["episode_rewards"]
             eval_avg_reward = float(np.mean(eval_rewards)) if eval_rewards else float("nan")
+            eval_reward_se = _reward_se(eval_rewards)
             history["random_eval"].append({
                 "episode": itr,
                 "win_rate": eval_win_rate,
+                "win_rate_se": eval_win_rate_se,
                 "avg_reward": eval_avg_reward,
+                "avg_reward_se": eval_reward_se,
             })
             if not quiet:
-                _print_random_eval(itr, eval_win_rate, eval_avg_reward, len(eval_rewards))
+                _print_random_eval(
+                    itr, eval_win_rate, eval_avg_reward, len(eval_rewards),
+                    win_rate_se=eval_win_rate_se, reward_se=eval_reward_se,
+                )
  
         if itr % args.opponent_update_every == 0:
             snapshot = {k: v.clone().detach() for k, v in online_net.state_dict().items()}
@@ -349,7 +401,19 @@ def run_self_play_training(args, players=2, gamma=0.99, lr=0.001, tau=0.005, qui
 
     return history
 
-def evaluate_model(net, players=2, episodes=100, opponent_epsilon=0.0, log_every=20, verbose=True):
+def evaluate_model(net, players=2, episodes=100, opponent_epsilon=0.0, log_every=20,
+                    verbose=True, seeds=None, eval_seed_base=0):
+    """seeds / eval_seed_base implement common random numbers (CRN) for
+    config comparisons: by default (seeds=None) this pairs every call with
+    every other default call at the same episode count, since both build
+    the same seeds list (eval_seed_base=0, 0..episodes-1). Two configs
+    evaluated this way see identical deck shuffles episode-for-episode -
+    deck luck is removed as a variance source instead of averaged over, per
+    section 2 / section 10 of the project notes. Pass an explicit `seeds`
+    list (or a different eval_seed_base) if you deliberately want an
+    unpaired/independent sample instead - e.g. to check a result isn't an
+    artifact of one particular seed list.
+    """
     global online_net, opponent_net, target_net
     online_net = net
     if opponent_net is None:
@@ -360,6 +424,9 @@ def evaluate_model(net, players=2, episodes=100, opponent_epsilon=0.0, log_every
         target_net.load_state_dict(net.state_dict())
     opponent_net.eval()
     target_net.eval()
+
+    if seeds is None:
+        seeds = list(range(eval_seed_base, eval_seed_base + episodes))
 
     eval_args = types.SimpleNamespace(
         episodes=episodes,
@@ -378,6 +445,7 @@ def evaluate_model(net, players=2, episodes=100, opponent_epsilon=0.0, log_every
         reward_window=max(episodes, 1),
         random_eval_every=episodes + 1,
         random_eval_episodes=0,
+        seeds=seeds,
     )
     history = run_self_play_training(eval_args, players, quiet=not verbose)
     if verbose:
