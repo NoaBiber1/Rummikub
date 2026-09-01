@@ -23,11 +23,60 @@ LEX_WEIGHT = 10000
 
 Meld = namedtuple("Meld", ["real_indices", "num_jokers"])
 
-# How many actions to build and how the budget splits. Returned array size is
-# bounded by min(max_actions, N + alt_counts*alts_per_count + 2) where N is the
-# most tiles playable this turn.
-DEFAULT_BUDGET = dict(max_actions=24, alt_counts=4, alts_per_count=4)
-TRAINING_BUDGET = dict(max_actions=12, alt_counts=2, alts_per_count=2)
+# [STALE-FIX] Two hardcoded presets used to live here - DEFAULT_BUDGET
+# (24/4/4) and TRAINING_BUDGET (12/2/2, silently used by ILP_solutions()
+# whenever no budget was passed, i.e. every call in this project's actual
+# pipeline: game_env.GE never passed one). Both are gone. `budget` is now a
+# REQUIRED argument to ILP_solutions.__init__ - see validate_budget() and the
+# for_claude.md section on config propagation for the full call chain from
+# seed_sweep.BASE_CONFIG["budget"] down to here. The two old dicts' VALUES
+# are preserved as the config default (simulation.DEFAULTS["budget"] =
+# 12/2/2, matching the old always-used TRAINING_BUDGET) so an existing config
+# that doesn't set "budget" gets identical behavior to before.
+BUDGET_KEYS = ("max_actions", "alt_counts", "alts_per_count")
+
+
+def validate_budget(budget):
+    """Fail-loudly shape check for a budget dict: exactly BUDGET_KEYS, each a
+    non-negative int, with max_actions specifically required to be >= 1.
+    Returns a clean copy (extra keys dropped) so downstream code can index it
+    without a KeyError guard.
+
+    max_actions=0 is NOT allowed, and not just as a stylistic minimum:
+    build_action_set's final line is `return actions[:cap]`, and the ladder's
+    first, always-legal action is added to `actions` unconditionally BEFORE
+    that slice - so max_actions=0 would silently turn a real legal move into
+    an empty action list, and GE.get_valid_x_list() reads an empty list as
+    "no legal moves, game over" (section 9). That is a correctness bug, not
+    a preference, so it is rejected here rather than merely discouraged.
+    alt_counts and alts_per_count MAY be 0 - that is the deliberate
+    ladder-only budget the QUICK ORIENTATION smoke-test recipe (2) uses, and
+    build_action_set's tier-2 loop (`counts[:alt_counts]`, `range(alts_per_count)`)
+    degrades to a no-op cleanly at 0, adding nothing and breaking nothing.
+
+    Deliberately a free function, not a method: ILP_solutions.__init__ below
+    calls it, but so does simulation._cfg, which validates config["budget"]
+    once per run - before any training time is spent - WITHOUT constructing
+    a full ILP_solutions (whose __init__ enumerates ~1173 melds, ~13ms,
+    section 2). A bad budget now fails at config time, the same treatment
+    tau/updates_per_step (via learn.effective_tau) and epsilon/epsilon_min/
+    epsilon_decay already get in simulation._cfg, rather than surfacing deep
+    inside build_action_set the first time a turn actually needs the cap.
+    """
+    if not isinstance(budget, dict):
+        raise TypeError(
+            f"budget must be a dict with keys {BUDGET_KEYS}, got {budget!r}"
+        )
+    missing = [k for k in BUDGET_KEYS if k not in budget]
+    if missing:
+        raise KeyError(f"budget is missing required key(s) {missing}: {budget!r}")
+    for k in BUDGET_KEYS:
+        v = budget[k]
+        floor = 1 if k == "max_actions" else 0
+        if isinstance(v, bool) or not isinstance(v, int) or v < floor:
+            raise ValueError(
+                f"budget[{k!r}] must be an integer >= {floor}, got {v!r}")
+    return {k: budget[k] for k in BUDGET_KEYS}
 
 
 def tile_point_value(index):
@@ -42,8 +91,12 @@ def _mask(indices):
 
 
 class ILP_solutions:
-    def __init__(self, budget=None):
-        self.budget = dict(budget or TRAINING_BUDGET)
+    def __init__(self, budget):
+        """`budget` is REQUIRED (no default, no hardcoded fallback - see the
+        note above BUDGET_KEYS). Every caller in this project's pipeline
+        ultimately sources it from config["budget"] via game_env.GE, which
+        itself now requires an explicit budget for the same reason."""
+        self.budget = validate_budget(budget)
         self.melds = self._generate_melds()
         self.meld_masks = [_mask(m.real_indices) for m in self.melds]
         self.meld_jokers = [m.num_jokers for m in self.melds]

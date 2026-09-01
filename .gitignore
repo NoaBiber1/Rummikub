@@ -119,6 +119,6 @@ app.*.symbols
 !/dev/ci/**/Gemfile.lock
 
 .cursor
-remmi_models_learning/*.rd
+remmi_models_learning/for_claude.md
 remmi_models_learning/checkpoints
 __pycache__/

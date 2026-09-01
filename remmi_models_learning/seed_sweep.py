@@ -1,109 +1,217 @@
 """
-Compare multiple training configs (different gamma/lr/tau, or in future
-different network architectures / replay strategies) with enough seeds and
-enough statistical care to trust the result.
+THE ENTRY POINT. Everything in this project is run from here: simulation.py
+is a pure module with no main(), and every knob it reads comes from the config
+dicts below.
+
+Compare multiple training configs (DQN vs DDQN, n_step, different
+gamma/lr/tau/updates_per_step/epsilon/epsilon_decay/epsilon_min/budget/
+buffer_size, or in future different
+architectures / replay strategies) with enough seeds and enough statistical care to trust the
+result.
+
+Every cell is scored against EVERY opponent in test_opponents (random,
+greedy, ...) on the same decks, and the results are kept separate: beating
+random is table stakes, beating greedy is the first real result, and a pooled
+number would hide which of the two just changed.
 
 Two variance-reduction pieces work together here:
   - Each config is trained with >=3 different TRAINING seeds (run-to-run DQN
     variance is large; one seed per config is how people convince themselves
     of effects that aren't there).
-  - Every seed's final evaluation uses the SAME fixed vs-random eval seed
-    list across every config (common random numbers - see
-    self_training.evaluate_model), so deck luck is paired out of the
-    config-vs-config comparison rather than averaged over.
+  - Every test block uses the SAME fixed eval seed list across every config
+    and seed (common random numbers - see simulation.run_test_simulation), so
+    deck luck is paired out of the config-vs-config comparison rather than
+    averaged over.
 
-This intentionally does NOT run a full factorial grid. Screen candidates
-with reduced `episodes` first; promote only finalists to a full-length run
-- see section 2 / section 10.3 of the project notes for why.
+This intentionally does NOT run a full factorial grid. Screen candidates with
+a reduced episode budget first; promote only finalists to a full-length run -
+see section 2 / section 10.3 of the project notes for why.
 
 Usage (from the project root, with both the project root and agent/ on
-PYTHONPATH - the same layout self_training.py itself requires):
+PYTHONPATH - the same layout simulation.py itself requires):
 
     python seed_sweep.py
 
-Edit CONFIGS below to add/remove configs. Results are written as JSON to
-checkpoints/sweep/<config_name>/seed<seed>.json and a summary table is
-printed (and returned) at the end.
+Edit CONFIGS below to add/remove configs and BASE_CONFIG for anything shared.
+Results are written as JSON to checkpoints/sweep/<config_name>/seed<seed>.json
+and a summary table is printed (and returned) at the end.
 """
-import copy
 import json
 import os
-import types
 
 import numpy as np
-import torch
 
-import self_training as st
-from q_model.v1_0 import MLP
+import simulation as sim
+from simulation import simulation
 
-# --- edit this to add/remove configs -----------------------------------
-CONFIGS = [
-    dict(name="gamma_0.95", gamma=0.95, lr=0.001, tau=0.005),
-    dict(name="gamma_0.99", gamma=0.99, lr=0.001, tau=0.005),
-    dict(name="gamma_0.995", gamma=0.995, lr=0.001, tau=0.005),
-]
+# --- shared by every config; override any key per-config below -------------
+# The three flow keys define the shape of a run: training_iterations blocks of
+# (train_episodes_per_block training games -> test_episodes_per_block test
+# games). Total training games per cell = iterations * train_episodes_per_block.
+BASE_CONFIG = dict(
+    training_iterations=10,
+    train_episodes_per_block=100,
+    test_episodes_per_block=20,
+    # ILP action-set budget for game_env.GE's solver (ilp_solution.py).
+    # max_actions: hard cap on the returned action list. alt_counts: how many
+    # top commitment-ladder rungs get tier-2 alternatives. alts_per_count:
+    # alternatives per rung. [STALE-FIX] Used to be two hardcoded dicts in
+    # ilp_solution.py (DEFAULT_BUDGET=24/4/4, TRAINING_BUDGET=12/2/2) with
+    # GE always silently getting TRAINING_BUDGET; both are gone, budget is
+    # now required all the way down to ILP_solutions.__init__. These are
+    # TRAINING_BUDGET's old values, so leaving this out of a per-config dict
+    # reproduces the old always-used behavior exactly. See
+    # simulation.DEFAULTS["budget"] and for_claude.md's budget config
+    # section for the full propagation path and the actions/ms trade-off
+    # table (richer budget = more actions per turn, more ILP solve time).
+    budget=dict(max_actions=12, alt_counts=2, alts_per_count=2),
+    # "DQN" (target net both picks and prices the next action) or "DDQN"
+    # (online net picks, target net prices - less overestimation bias). 0/1
+    # also accepted. See learning.py.
+    learning_method="DQN",
+    # Bootstrap horizon. 1 = standard 1-step TD. Rewards here are 0 until the
+    # game ends, so n_step controls how many turns the one real number travels
+    # back per update - a strong candidate axis to sweep.
+    n_step=1,
+    # Potential-based reward shaping (Ng et al. 1999) with PHI = score
+    # differential. Policy-invariant, so this is a LEARNING-SPEED axis, not a
+    # different objective: sweep it, don't assume it.
+    reward_shaping=True,
+    gamma=0.99,
+    lr=0.001,
+    tau=0.005,          # target drift per ENVIRONMENT STEP, not per update
+    # Gradient updates per environment step (the replay ratio). tau below is
+    # the drift budget PER TURN and is compensated for this value, so changing
+    # it varies the replay ratio alone - see simulation/learning notes.
+    updates_per_step=4,
+    # Exploration schedule for the learner: start value, per-episode decay,
+    # and floor. All three are explicit config keys (simulation.DEFAULTS
+    # carries the same values as its own defaults, so leaving any of them out
+    # of a per-config dict below still reproduces the old hardcoded
+    # INITIAL_EPSILON/MIN_EPSILON behavior exactly) - see the note in
+    # simulation.py next to DEFAULTS and for_claude.md section 5.1.
+    epsilon=1.0,
+    epsilon_decay=0.995,
+    epsilon_min=0.05,
+    # Replay buffer CAPACITY (a fresh-per-training-block deque, section 8).
+    # [STALE-FIX] Was already a simulation.DEFAULTS key with no hardcoded
+    # fallback in the buffer's own construction - `ReplayBuffer(cfg[
+    # "buffer_size"])` was already dynamic - but it wasn't explicitly named
+    # here, so a sweep could vary every other knob without ever touching the
+    # one that sets how much experience the agent replays from. 20000 is
+    # simulation.DEFAULTS' value (same default either way), roughly the most
+    # recent ~500 episodes at ~35-45 turns/episode - a sliding window, not the
+    # whole run: early experience from a much weaker policy should age out.
+    # MUST stay >= min_buffer_size (simulation.DEFAULTS, 500) - simulation._cfg
+    # now enforces this (13), since a buffer_size below the warmup threshold
+    # means len(buffer) can never reach it and the run silently never trains.
+    buffer_size=20000,
+    # Each is benchmarked against the main agent in its own 1-vs-1 block,
+    # sequentially. Baselines never meet each other. Cost is linear in the
+    # length of this list.
+    test_opponents=["random", "greedy"],
+    quiet=True,
+)
+
+# Which opponent's avg reward ranks the configs. The others are still measured
+# and printed - this only decides the sort order, and picking one explicitly
+# beats letting list order decide it silently.
+SCORE_OPPONENT = "random"
+
+# --- edit this to add/remove configs ---------------------------------------
+
+# One axis at a time (see the docstring), so swap the list rather than crossing
+# it with the one above:
+#   CONFIGS = [dict(name="dqn", learning_method="DQN"),
+#              dict(name="ddqn", learning_method="DDQN")]
+#   CONFIGS = [dict(name=f"n{n}", n_step=n) for n in (1, 3, 5)]
+#   CONFIGS = [dict(name="shaped", reward_shaping=True),
+#              dict(name="unshaped", reward_shaping=False)]
+#   CONFIGS = [dict(name=f"u{u}", updates_per_step=u) for u in (1, 2, 4, 8)]
+#   CONFIGS = [dict(name=f"budget_{b['max_actions']}", budget=b) for b in
+#              (dict(max_actions=6, alt_counts=1, alts_per_count=1),
+#               dict(max_actions=12, alt_counts=2, alts_per_count=2),
+#               dict(max_actions=24, alt_counts=4, alts_per_count=4))]
+#   CONFIGS = [dict(name=f"buf{b}", buffer_size=b) for b in (5000, 20000, 50000)]
+#              # keep min_buffer_size (simulation.DEFAULTS, 500) below the
+#              # smallest buffer_size tried, or override it alongside
 TRAINING_SEEDS = [0, 1, 2]          # >=3, per-config training seeds
 EVAL_SEED_BASE = 10_000             # fixed across every config/seed -> CRN
-PLAYERS = 2
 
 
-def _train_one(config, seed, episodes, eval_episodes, players=PLAYERS,
-                training_overrides=None, quiet=True):
-    """Run one (config, seed) cell: train from scratch, then evaluate vs
-    random with the shared CRN eval seeds. Returns a dict ready to json.dump.
-    """
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+def build_config(config, seed, overrides=None):
+    """One (config, seed) cell's full config dict: BASE_CONFIG, then the
+    config's own keys, then the sweep-level pins (seed, shared eval seeds),
+    then any ad-hoc overrides. simulation._cfg fills in the rest and raises on
+    an unknown key, so a typo here fails loudly instead of silently doing
+    nothing."""
+    return {
+        **BASE_CONFIG,
+        **config,
+        **(overrides or {}),
+        "seed": seed,
+        "eval_seed_base": EVAL_SEED_BASE,
+    }
 
-    st.online_net = MLP(seed=seed)
-    st.opponent_net = MLP(seed=seed)
-    st.opponent_net.load_state_dict(st.online_net.state_dict())
-    st.target_net = MLP(seed=seed)
-    st.target_net.load_state_dict(st.online_net.state_dict())
-    st.opponent_net.eval()
-    st.target_net.eval()
 
-    args = copy.deepcopy(st.TRAINING)
-    args.episodes = episodes
-    if training_overrides:
-        for k, v in training_overrides.items():
-            setattr(args, k, v)
+def _run_one(config, seed, overrides=None):
+    """Run one (config, seed) cell end to end and return a dict ready to
+    json.dump. simulation() owns the nets, the RNG seeding and the
+    train/test block loop; this only scores what comes back."""
+    full_config = build_config(config, seed, overrides)
+    result = simulation(full_config)
 
-    train_history = st.run_self_play_training(
-        args, players=players,
-        gamma=config["gamma"], lr=config["lr"], tau=config["tau"],
-        quiet=quiet,
-    )
+    # {opponent_label: [one summarize() dict per block]}
+    blocks = result["blocks"]
+    rewards = result["train_history"]["episode_rewards"]
+    window = result["config"]["reward_window"]
 
-    # Shared eval seeds across every config/seed: CRN at the comparison
-    # level, not just within a single evaluate_model call.
-    eval_history = st.evaluate_model(
-        st.online_net, players=players, episodes=eval_episodes,
-        opponent_epsilon=1.0, verbose=not quiet,
-        eval_seed_base=EVAL_SEED_BASE,
-    )
-
-    eval_rewards = eval_history["episode_rewards"]
-    eval_wins = [w for w in eval_history["wins"] if w is not None]
-    result = {
+    return {
         "config": config["name"],
         "seed": seed,
-        "episodes": episodes,
-        "eval_episodes": eval_episodes,
-        "eval_avg_reward": float(np.mean(eval_rewards)) if eval_rewards else float("nan"),
-        "eval_win_rate": (sum(eval_wins) / len(eval_wins) * 100.0) if eval_wins else float("nan"),
-        "train_final_reward_median": float(np.median(
-            train_history["episode_rewards"][-args.reward_window:]
-        )) if train_history["episode_rewards"] else float("nan"),
+        "training_iterations": full_config["training_iterations"],
+        "train_episodes_per_block": full_config["train_episodes_per_block"],
+        "test_episodes_per_block": full_config["test_episodes_per_block"],
+        "hyperparams": {k: full_config[k] for k in
+                        ("learning_method", "n_step", "reward_shaping",
+                         "gamma", "lr", "tau", "updates_per_step",
+                         "epsilon", "epsilon_decay", "epsilon_min",
+                         "budget", "buffer_size")},
+        # Final block, per opponent. score_of() below reads this.
+        "eval": {label: {"avg_reward": series[-1]["avg_reward"],
+                         "avg_reward_se": series[-1]["avg_reward_se"],
+                         "win_rate": series[-1]["win_rate"],
+                         "n": series[-1]["n"]}
+                 for label, series in blocks.items()},
+        # The whole learning curve, not just its endpoint: a config that peaks
+        # early and decays looks identical to a steady one at the last block.
+        "test_curves": {label: [{"episode": b["episode"],
+                                 "avg_reward": b["avg_reward"],
+                                 "win_rate": b["win_rate"]} for b in series]
+                        for label, series in blocks.items()},
+        "train_final_reward_median": float(np.median(rewards[-window:]))
+        if rewards else float("nan"),
     }
-    return result
 
 
-def run_sweep(configs=CONFIGS, seeds=TRAINING_SEEDS, episodes=1000,
-              eval_episodes=100, players=PLAYERS, training_overrides=None,
+def score_of(result, opponent=None):
+    """A cell's headline number: final-block avg reward vs `opponent`.
+    Falls back to the only opponent present when SCORE_OPPONENT wasn't in
+    test_opponents, so changing the list can't silently produce a KeyError
+    mid-sweep."""
+    evals = result["eval"]
+    if opponent is None:
+        opponent = SCORE_OPPONENT
+    if opponent not in evals:
+        opponent = next(iter(evals))
+    return evals[opponent]["avg_reward"]
+
+
+def run_sweep(configs=CONFIGS, seeds=TRAINING_SEEDS, overrides=None,
               out_dir=None, quiet=True):
     if out_dir is None:
-        out_dir = os.path.join(st.CHECKPOINT_DIR, "sweep")
+        out_dir = os.path.join(sim.CHECKPOINT_DIR, "sweep")
+    overrides = {**(overrides or {}), "quiet": quiet}
 
     all_results = []
     for config in configs:
@@ -111,53 +219,76 @@ def run_sweep(configs=CONFIGS, seeds=TRAINING_SEEDS, episodes=1000,
         os.makedirs(cfg_dir, exist_ok=True)
         for seed in seeds:
             print(f"[sweep] config={config['name']} seed={seed} "
-                  f"(gamma={config['gamma']} lr={config['lr']} tau={config['tau']})")
-            result = _train_one(
-                config, seed, episodes, eval_episodes, players=players,
-                training_overrides=training_overrides, quiet=quiet,
-            )
+                  f"({ {k: v for k, v in config.items() if k != 'name'} })")
+            result = _run_one(config, seed, overrides)
             out_path = os.path.join(cfg_dir, f"seed{seed}.json")
             with open(out_path, "w") as f:
                 json.dump(result, f, indent=2)
             all_results.append(result)
-            print(f"    -> eval_avg_reward={result['eval_avg_reward']:.2f} "
-                  f"eval_win_rate={result['eval_win_rate']:.1f}%  (saved {out_path})")
+            for label, e in result["eval"].items():
+                print(f"    -> vs {label:<10} avg_reward={e['avg_reward']:.2f} "
+                      f"win_rate={e['win_rate']:.1f}%")
+            print(f"       (saved {out_path})")
 
     summary = summarize(all_results)
     print_summary(summary)
     return all_results, summary
 
 
+def _mean_se(values):
+    n = len(values)
+    return dict(
+        n_seeds=n,
+        mean=float(np.mean(values)),
+        se=float(np.std(values, ddof=1) / np.sqrt(n)) if n > 1 else float("nan"),
+        per_seed=values,
+    )
+
+
 def summarize(all_results):
-    """Mean/SE of eval_avg_reward ACROSS TRAINING SEEDS, per config. This is
-    a second, outer layer of variance on top of the per-seed eval SE:
-    run-to-run DQN training variance, not sampling noise within one eval.
+    """Mean/SE of final avg reward ACROSS TRAINING SEEDS, per config AND per
+    opponent. This is a second, outer layer of variance on top of the per-seed
+    eval SE: run-to-run DQN training variance, not sampling noise within one
+    eval. Opponents stay separate here too - a config can improve against
+    random while going nowhere against greedy, and that IS the finding.
     """
     by_config = {}
     for r in all_results:
-        by_config.setdefault(r["config"], []).append(r["eval_avg_reward"])
+        for label, e in r["eval"].items():
+            by_config.setdefault(r["config"], {}).setdefault(label, []).append(
+                e["avg_reward"])
 
-    summary = {}
-    for name, rewards in by_config.items():
-        n = len(rewards)
-        mean = float(np.mean(rewards))
-        se = float(np.std(rewards, ddof=1) / np.sqrt(n)) if n > 1 else float("nan")
-        summary[name] = dict(n_seeds=n, mean_eval_avg_reward=mean, se=se, per_seed=rewards)
-    return summary
+    return {name: {label: _mean_se(values) for label, values in by_opponent.items()}
+            for name, by_opponent in by_config.items()}
+
+
+def _ranking_opponent(summary):
+    """SCORE_OPPONENT if it was actually tested, else the first label seen."""
+    labels = next(iter(summary.values())).keys() if summary else []
+    return SCORE_OPPONENT if SCORE_OPPONENT in labels else next(iter(labels), None)
 
 
 def print_summary(summary):
-    print("\n=== config comparison (mean eval avg-reward across training seeds) ===")
-    rows = sorted(summary.items(), key=lambda kv: -kv[1]["mean_eval_avg_reward"])
-    for name, s in rows:
-        print(f"  {name:<20} {s['mean_eval_avg_reward']:>8.2f}  (SE +/-{s['se']:.2f}, n={s['n_seeds']} seeds)  "
-              f"per-seed={['%.2f' % v for v in s['per_seed']]}")
+    if not summary:
+        return
+    ranked_by = _ranking_opponent(summary)
+    print(f"\n=== config comparison (mean final avg-reward across training seeds, "
+          f"ranked vs {ranked_by}) ===")
+    rows = sorted(summary.items(), key=lambda kv: -kv[1][ranked_by]["mean"])
+    for name, by_opponent in rows:
+        print(f"  {name}")
+        for label, s in by_opponent.items():
+            marker = "*" if label == ranked_by else " "
+            print(f"   {marker} vs {label:<10} {s['mean']:>8.2f}  "
+                  f"(SE +/-{s['se']:.2f}, n={s['n_seeds']} seeds)  "
+                  f"per-seed={['%.2f' % v for v in s['per_seed']]}")
     if len(rows) >= 2:
-        top, second = rows[0], rows[1]
-        gap = top[1]["mean_eval_avg_reward"] - second[1]["mean_eval_avg_reward"]
-        combined_se = (top[1]["se"] ** 2 + second[1]["se"] ** 2) ** 0.5
+        top, second = rows[0][1][ranked_by], rows[1][1][ranked_by]
+        gap = top["mean"] - second["mean"]
+        combined_se = (top["se"] ** 2 + second["se"] ** 2) ** 0.5
         note = "likely real" if combined_se == combined_se and gap > 2 * combined_se else "not distinguishable from noise at ~2 SE"
-        print(f"\n  top vs runner-up gap: {gap:.2f} (combined SE {combined_se:.2f}) -> {note}")
+        print(f"\n  top vs runner-up gap (vs {ranked_by}): {gap:.2f} "
+              f"(combined SE {combined_se:.2f}) -> {note}")
     print()
 
 
