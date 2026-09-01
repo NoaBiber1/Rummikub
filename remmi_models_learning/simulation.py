@@ -72,6 +72,10 @@ CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "online_net.pt")
 DEFAULTS = dict(
     # --- simulation flow ---
     training_iterations=10,
+    # 0 is legal and means "never train": the test blocks then measure the
+    # network exactly as _build_nets initialised it. That is how the untrained
+    # FLOOR is measured (see _cfg's flow-key validation). Anything > 0 trains
+    # normally.
     train_episodes_per_block=100,
     test_episodes_per_block=20,
     # --- ILP action-set budget (game_env.GE -> ilp_solution.ILP_solutions) ---
@@ -122,6 +126,12 @@ DEFAULTS = dict(
     epsilon_decay=0.995,
     epsilon_min=0.05,
     # --- replay ---
+    # CAPACITY of the run's single replay buffer. simulation() builds one and
+    # reuses it across every training block, so this is a sliding window over
+    # the whole run's experience - roughly the most recent ~500 episodes at
+    # ~40 turns/episode. [STALE-FIX] the buffer used to be rebuilt per block,
+    # which capped occupancy at one block's worth and made every capacity above
+    # that identical; see run_self_play_training.
     buffer_size=20000,
     min_buffer_size=500,
     batch_size=32,
@@ -158,6 +168,26 @@ def _cfg(config):
     if not isinstance(cfg["n_step"], int) or isinstance(cfg["n_step"], bool) \
             or cfg["n_step"] < 1:
         raise ValueError(f"n_step must be an integer >= 1, got {cfg['n_step']!r}")
+    # The three flow keys, checked here so a malformed run shape fails at
+    # config time rather than as an IndexError several blocks in.
+    #   training_iterations >= 1   at least one (train -> test) block, or the
+    #                              run produces no measurement at all
+    #   train_episodes_per_block >= 0
+    #       0 IS LEGAL and is a supported configuration, not a degenerate one:
+    #       it evaluates the network exactly as initialised, which is the
+    #       untrained FLOOR every later "beats the floor by 2 SE" claim is
+    #       measured against. simulation() carries epsilon forward with a guard
+    #       for precisely this case.
+    #   test_episodes_per_block >= 0
+    #       0 skips measurement entirely - legal, but the run returns empty
+    #       `blocks`, so anything scoring it must tolerate that.
+    for key, floor in (("training_iterations", 1),
+                       ("train_episodes_per_block", 0),
+                       ("test_episodes_per_block", 0)):
+        value = cfg[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < floor:
+            raise ValueError(
+                f"{key} must be an integer >= {floor}, got {value!r}")
     # Validates updates_per_step (int >= 1) and tau (in [0,1]) together, since
     # the target-drift compensation is only defined for both.
     learn.effective_tau(cfg["tau"], cfg["updates_per_step"])
@@ -316,15 +346,60 @@ def _resolve_opponent(opponent, epsilon=0.0):
 
 # ------------------------------------------------------------- one episode
 
-def _take_turn(ge, policy):
+def _take_turn(ge, policy, valid_x_list=None):
     """One turn for whichever player is to move: get_valid_x_list -> policy ->
-    play. Returns the x played, or None if there was nothing to play."""
-    valid_x_list = ge.get_valid_x_list()
+    play. Returns the x played, or None if there was nothing to play.
+
+    `valid_x_list` is an OPTIONAL already-computed legal set for the state the
+    game is in RIGHT NOW. None means "compute it" - the original behaviour and
+    what every opponent turn still does. Passing one skips ge.get_valid_x_list(),
+    which is the single most expensive call in the project (~3.45 ILP solves,
+    ~66ms at budget 12/2/2), so it must be the legal set of the CURRENT mover in
+    the CURRENT position, not a stale one. _play_episode is the only caller that
+    passes it; see the note there for why the state cannot have moved.
+
+    [GOTCHA] `[]` is a MEANINGFUL value here, not "no cache": it means the
+    caller already established there is nothing legal. That is why the sentinel
+    is None and the check below is `is None`, not falsiness - `if not
+    valid_x_list: valid_x_list = ge.get_valid_x_list()` would re-run the solver
+    on exactly the position where the answer is known and known to be empty.
+    """
+    if valid_x_list is None:
+        valid_x_list = ge.get_valid_x_list()
+    elif VERIFY_ACTION_CACHE:
+        _assert_cache_matches(ge, valid_x_list)
     if not valid_x_list:
         return None
     chosen_x = policy(valid_x_list)
     ge.play(chosen_x)
     return chosen_x
+
+
+# Off by default: the check costs a full extra get_valid_x_list (i.e. it
+# restores exactly the duplicate solve the cache exists to remove), so it is a
+# verification mode, not a safety net to leave on. Flip it for a short run
+# after touching _play_episode's turn order or GE's state handling, confirm it
+# stays silent, flip it back. Also exercised by
+# test_action_cache_equivalence.py.
+VERIFY_ACTION_CACHE = False
+
+
+def _assert_cache_matches(ge, cached):
+    """The invariant the cache rests on: the position has not moved since the
+    cached list was built. Compares the [board|hand] prefix that every
+    candidate x carries (ACTION_START = 2*VECTOR_LEN) against the live game."""
+    fresh = ge.get_valid_x_list()
+    if len(fresh) != len(cached):
+        raise AssertionError(
+            f"[VERIFY_ACTION_CACHE] cached legal set has {len(cached)} actions, "
+            f"recomputing gives {len(fresh)} - the cached list does not belong "
+            f"to this state")
+    for a, b in zip(fresh, cached):
+        if not torch.equal(torch.as_tensor(a)[:ACTION_START],
+                           torch.as_tensor(b)[:ACTION_START]):
+            raise AssertionError(
+                "[VERIFY_ACTION_CACHE] cached candidates carry a different "
+                "[board|hand] prefix than the live position")
 
 
 def _opponent_turns(ge, policy, count):
@@ -369,6 +444,14 @@ def _play_episode(ge, episode, main_player, main_policy, opponent_policy,
     between training and testing: it owns whatever happens to the weights, and
     its own sanity checking (training legitimately returns NaN during buffer
     warmup, which is not a fire-alarm condition).
+
+    ONE SOLVER CALL PER STATE. The legal set built for s' after the opponents
+    reply is handed straight to the next iteration's _take_turn instead of
+    being rebuilt there. s' and "the state the learner acts from next" are the
+    same state, so this is a pure de-duplication, not a cache with an
+    invalidation policy - see the block comment at the bottom of the loop for
+    the argument, and simulation.VERIFY_ACTION_CACHE for the switch that
+    re-checks it at runtime.
 
     N-STEP AGGREGATION LIVES HERE, in `pending`. A turn's (x, reward) is held
     until n_step rewards have actually been observed after it; only then is it
@@ -421,6 +504,10 @@ def _play_episode(ge, episode, main_player, main_policy, opponent_policy,
     losses, qs, turns = [], [], 0
     pending = deque()
     last_next_valid_x_list = []
+    # The learner's legal set for the state it is about to act from. None on
+    # the first pass (nothing computed yet); afterwards it is the SAME list
+    # object the transition was built against - see the note below.
+    valid_x_list = None
 
     def emit(next_valid_x_list, done):
         x, _ = pending[0]
@@ -433,7 +520,7 @@ def _play_episode(ge, episode, main_player, main_policy, opponent_policy,
     while not ge.is_Done():
         phi = ge.potential(main_player) if shaping else 0.0
 
-        main_chosen_x = _take_turn(ge, main_policy)
+        main_chosen_x = _take_turn(ge, main_policy, valid_x_list)
         if main_chosen_x is None:
             break
 
@@ -451,6 +538,27 @@ def _play_episode(ge, episode, main_player, main_policy, opponent_policy,
         last_next_valid_x_list = next_valid_x_list
         if len(pending) == n_step:
             emit(next_valid_x_list, ge.is_Done())
+
+        # THE LEGAL SET COMPUTED ABOVE IS THE ONE THE NEXT TURN NEEDS. s' (the
+        # state whose legal set goes into the transition) and the state the
+        # learner acts from next are THE SAME STATE - the loop does nothing
+        # between here and the next _take_turn that can move the game. What
+        # runs in between is: ge.get_reward / ge.potential (both read-only),
+        # ev.check_reward (pure), and `update`, which touches the replay buffer
+        # and the nets, never the GE. So handing this list forward is the same
+        # list get_valid_x_list would rebuild, not an approximation of it.
+        #
+        # This removes ~1 of every 3 solver calls per round: a round used to
+        # cost the learner's set (in _take_turn), the opponent's set, then the
+        # learner's set AGAIN (here). Now it costs two.
+        #
+        # [GOTCHA] Do NOT "simplify" this to `valid_x_list = next_valid_x_list
+        # or None`. An empty next_valid_x_list only ever happens when the game
+        # is done (GE.get_valid_x_list sets done itself when it comes back
+        # empty, section 9), and `while not ge.is_Done()` then ends the loop -
+        # so [] is never consumed. Mapping it to None would instead re-run the
+        # solver on a finished game.
+        valid_x_list = next_valid_x_list
 
     # GE.get_valid_x_list() sets done itself when it comes back empty, so a
     # `main_chosen_x is None` break leaves the game finished too - read done
@@ -474,7 +582,8 @@ def _snapshot(net):
 
 # ----------------------------------------------------------------- training
 
-def run_self_play_training(config=None, epsilon=None, episodes=None):
+def run_self_play_training(config=None, epsilon=None, episodes=None,
+                           replay_buffer=None):
     """ONE training block: train online_net by self-play against ONE opponent,
     opponent_net, which is periodically reloaded from a pool of past
     online_net snapshots.
@@ -508,7 +617,24 @@ def run_self_play_training(config=None, epsilon=None, episodes=None):
 
     ge = GE(PLAYERS_PER_GAME, cfg["budget"])
     opponent_snapshots = [_snapshot(online_net)]
-    replay_buffer = ReplayBuffer(cfg["buffer_size"])
+    # RUN-SCOPED, NOT BLOCK-SCOPED. simulation() builds one buffer and passes
+    # the same object into every block; `None` means "standalone call", which
+    # keeps this function usable on its own.
+    #
+    # [STALE-FIX] This used to be an unconditional
+    # `ReplayBuffer(cfg["buffer_size"])` here, so the buffer was rebuilt at the
+    # start of EVERY training block. Section 8 describes buffer_size as "the
+    # most recent ~500 episodes: a genuine sliding window, not the whole run" -
+    # which a per-block buffer cannot be. At the default 10 blocks x 100
+    # episodes, a block only ever collected ~3,700 transitions, so every
+    # capacity at or above that was identical and nothing was ever evicted:
+    # buffer_size was not a live knob and a sweep over it compared three copies
+    # of the same configuration. Rebuilding also re-paid min_buffer_size warmup
+    # every block (~14 episodes of 100, ~14% of training spent not training)
+    # and threw away every transition the previous block had paid an ILP solve
+    # to collect.
+    if replay_buffer is None:
+        replay_buffer = ReplayBuffer(cfg["buffer_size"])
     history = ev.new_history()
     start_time = time.time()
 
@@ -744,12 +870,24 @@ def simulation(config):
     test_histories = {}
     blocks = {}
     epsilon = cfg["epsilon"]
+    # ONE buffer for the whole run, handed to every block (section 8). Built
+    # here rather than inside run_self_play_training so that buffer_size means
+    # what section 8 says it means - a sliding window over recent EXPERIENCE -
+    # instead of resetting every block and capping out at one block's worth.
+    replay_buffer = ReplayBuffer(cfg["buffer_size"])
 
     for block in range(1, cfg["training_iterations"] + 1):
-        _merge_history(train_history, run_self_play_training(config, epsilon=epsilon))
+        _merge_history(train_history, run_self_play_training(
+            config, epsilon=epsilon, replay_buffer=replay_buffer))
         # Carry exploration forward: the schedule spans the whole run, not one
         # block. record_episode stored the post-decay value every episode.
-        epsilon = train_history["epsilons"][-1]
+        #
+        # The guard is for train_episodes_per_block=0, the "evaluate an
+        # untrained net" configuration: no episode ran, so no epsilon was
+        # recorded, and [-1] on the empty list used to raise IndexError before
+        # the first test block ever executed.
+        if train_history["epsilons"]:
+            epsilon = train_history["epsilons"][-1]
 
         episodes_so_far = len(train_history["episode_rewards"])
         if not quiet:

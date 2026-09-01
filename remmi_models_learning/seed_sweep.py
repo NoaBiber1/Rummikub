@@ -135,22 +135,76 @@ SCORE_OPPONENT = "random"
 #   CONFIGS = [dict(name=f"buf{b}", buffer_size=b) for b in (5000, 20000, 50000)]
 #              # keep min_buffer_size (simulation.DEFAULTS, 500) below the
 #              # smallest buffer_size tried, or override it alongside
+# The sweep run by a bare `python seed_sweep.py`. MUST exist even if it only
+# holds one all-defaults cell: run_sweep's signature below is
+# `def run_sweep(configs=CONFIGS, ...)`, and Python evaluates default arguments
+# at DEFINITION time, so an undefined name here is an ImportError-class
+# failure - `NameError: name 'CONFIGS' is not defined` raised while the module
+# is still being read, before any of it runs. Nothing in the project imports
+# without it.
+CONFIGS = [dict(name="baseline")]
+
 TRAINING_SEEDS = [0, 1, 2]          # >=3, per-config training seeds
-EVAL_SEED_BASE = 10_000             # fixed across every config/seed -> CRN
+# Default first eval seed. Every config and every training seed reuses the same
+# eval seed list, which is what makes the comparison paired (CRN, section 12.1),
+# so this is deliberately a single module-level value rather than something a
+# per-config dict sets casually. A config CAN now override it (build_config
+# below) - that exists for one purpose, a HELD-OUT eval set that was never used
+# for selection, and using it for anything else silently unpairs the sweep.
+EVAL_SEED_BASE = 10_000
 
 
 def build_config(config, seed, overrides=None):
-    """One (config, seed) cell's full config dict: BASE_CONFIG, then the
-    config's own keys, then the sweep-level pins (seed, shared eval seeds),
-    then any ad-hoc overrides. simulation._cfg fills in the rest and raises on
-    an unknown key, so a typo here fails loudly instead of silently doing
-    nothing."""
+    """One (config, seed) cell's full config dict.
+
+    PRECEDENCE, lowest to highest:
+        BASE_CONFIG  <  the config's own keys  <  overrides
+    then two sweep-level pins are applied on top. simulation._cfg fills in the
+    rest and raises on an unknown key, so a typo here fails loudly instead of
+    silently doing nothing.
+
+    THE TWO PINS, and why they are not ordinary keys:
+
+    `seed` is owned by run_sweep's `seeds=` argument, not by a config. The
+    entire point of the sweep is to run EVERY config across the SAME set of
+    training seeds so the across-seed spread (summarize() below) measures
+    run-to-run training variance rather than a difference in which seeds each
+    config happened to get. A config that pinned its own seed would collapse
+    that comparison while still printing an SE, so it is rejected rather than
+    silently ignored.
+
+    `eval_seed_base` defaults to the module-level EVAL_SEED_BASE for the same
+    reason - every cell must be scored on the same decks or the comparison
+    stops being paired. It IS overridable, because one legitimate case needs
+    it: a FINAL HELD-OUT evaluation on seeds that were never used for
+    selection. Selecting and reporting on the same eval seeds biases the
+    reported number upward, and there is no other way to get a clean holdout.
+    Set it deliberately, per config, and never mid-sweep.
+
+    [GOTCHA] `name` is not a config key at all - run_sweep reads it off the
+    per-config dict to pick the output directory and the result label, and
+    simulation._cfg merely tolerates it. In `overrides` it would rename every
+    cell's plot title while leaving the directories untouched, so it is
+    rejected too.
+    """
+    overrides = dict(overrides or {})
+    for source, label in ((config, "config"), (overrides, "overrides")):
+        if "seed" in source:
+            raise KeyError(
+                f"{label} sets 'seed' - training seeds come from run_sweep's "
+                f"seeds= argument, so a per-config seed would silently break "
+                f"the across-seed variance estimate this sweep exists to make")
+    if "name" in overrides:
+        raise KeyError(
+            "overrides sets 'name' - the config name selects the output "
+            "directory and is read off the per-config dict, so setting it here "
+            "would relabel results without moving them")
+
+    merged = {**BASE_CONFIG, **config, **overrides}
     return {
-        **BASE_CONFIG,
-        **config,
-        **(overrides or {}),
+        **merged,
         "seed": seed,
-        "eval_seed_base": EVAL_SEED_BASE,
+        "eval_seed_base": merged.get("eval_seed_base", EVAL_SEED_BASE),
     }
 
 
@@ -169,6 +223,10 @@ def _run_one(config, seed, overrides=None):
     return {
         "config": config["name"],
         "seed": seed,
+        # Recorded because it is now overridable (build_config): two results
+        # scored on different eval seeds are not paired, and without this in
+        # the JSON there is no way to tell afterwards which is which.
+        "eval_seed_base": full_config["eval_seed_base"],
         "training_iterations": full_config["training_iterations"],
         "train_episodes_per_block": full_config["train_episodes_per_block"],
         "test_episodes_per_block": full_config["test_episodes_per_block"],

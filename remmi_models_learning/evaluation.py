@@ -15,7 +15,27 @@ import numpy as np
 # keep the dependency one-way.
 PLOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
-MAX_POSSIBLE_REWARD = 2 * 4 * sum(range(1, 14)) + 2 * 30
+# The whole deck's face value: 2 copies x 4 colours x values 1..13, plus 2
+# jokers at 30. No zero-sum payoff can exceed this in magnitude.
+MAX_DECK_VALUE = 2 * 4 * sum(range(1, 14)) + 2 * 30          # 788
+
+# GE.get_reward divides the payoff by this before returning it, so EVERY reward
+# that reaches check_reward is already scaled.
+REWARD_SCALE = 100.0
+
+# [STALE-FIX] This used to be MAX_DECK_VALUE itself, i.e. 788, and was compared
+# against a reward that had already been divided by 100 - so the guard sat 100x
+# above the largest value the game can physically produce and could not fire on
+# anything. check_reward(700.0) passed silently. The bound belongs on the same
+# scale as the number being checked.
+MAX_POSSIBLE_REWARD = MAX_DECK_VALUE / REWARD_SCALE          # 7.88
+
+# The bound is exactly attainable in principle, and get_reward computes it in
+# float32 before widening to Python float, so a legitimately maximal payoff can
+# land a few ULP above 7.88. The tolerance keeps the fire alarm from firing on
+# rounding rather than on a bug; it is far too small to admit any real error,
+# which would be off by whole points, not by 1e-6.
+REWARD_BOUND_TOLERANCE = 1e-6
 
 
 def _nanmean(values):
@@ -25,10 +45,22 @@ def _nanmean(values):
 # ------------------------------------------------------------- fire alarm
 
 def check_reward(reward, episode):
-    if abs(reward) > MAX_POSSIBLE_REWARD:
+    """Fire alarm on a reward outside [-7.88, +7.88], the scaled zero-sum bound.
+
+    Symmetric by construction: the payoff is zero-sum, so the winner's +x is
+    some loser's -x and both ends of the range are equally reachable.
+
+    Call this with the TRUE reward (GE.get_reward), never a shaped one. A
+    potential-based shaping term legitimately pushes a per-turn reward outside
+    this range, so checking the shaped value would need a bound loose enough to
+    stop catching anything - which is exactly the state this check was in
+    before the scale was fixed (see MAX_POSSIBLE_REWARD above).
+    """
+    if abs(reward) > MAX_POSSIBLE_REWARD + REWARD_BOUND_TOLERANCE:
         raise RuntimeError(
-            f"[sanity check] reward {reward} at episode {episode} exceeds the "
-            f"physically possible bound of +/-{MAX_POSSIBLE_REWARD} - this is a "
+            f"[sanity check] reward {reward} at episode {episode} is outside "
+            f"the physically possible range "
+            f"[-{MAX_POSSIBLE_REWARD}, +{MAX_POSSIBLE_REWARD}] - this is a "
             f"reward-computation bug, not an unusual game. Stopping immediately."
         )
 
