@@ -122,3 +122,4 @@ app.*.symbols
 remmi_models_learning/for_claude.md
 remmi_models_learning/checkpoints
 __pycache__/
+run.py

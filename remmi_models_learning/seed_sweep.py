@@ -41,6 +41,7 @@ import os
 
 import numpy as np
 
+import parallel_sweep as ps
 import simulation as sim
 from simulation import simulation
 
@@ -266,27 +267,49 @@ def score_of(result, opponent=None):
 
 
 def run_sweep(configs=CONFIGS, seeds=TRAINING_SEEDS, overrides=None,
-              out_dir=None, quiet=True):
+              out_dir=None, quiet=True, workers=1, resume=True):
+    """Run every (config, seed) cell and summarise.
+
+    `workers` is how many cells run AT ONCE, each in its own subprocess (see
+    parallel_sweep for why subprocesses and not multiprocessing). 1 is the
+    default and reproduces the original serial behaviour; 'auto' uses one per
+    core. Cells are independent - separate processes, separate seeds, separate
+    output files, and nothing shared but the ILP's temp directory, which is
+    uuid-prefixed - so a parallel sweep returns the same results as a serial
+    one. Only the wall-clock and the interleaving of the progress lines change.
+
+    `resume` skips cells whose result JSON already exists. A campaign of this
+    length gets interrupted, and re-running a nine-hour block to recover the
+    two cells that had not finished is a mistake you only need to make once.
+    Delete a config's directory to force it to re-run.
+
+    A cell that FAILS is reported and skipped, not fatal. One diverging lr is
+    an expected outcome of a sweep - the test plan's own rule is "discard that
+    cell" - and it should not cost the other 26. Failures are listed again
+    before the summary, with their tracebacks in seed<N>.error.json, and are
+    absent from the table rather than being scored as zeros.
+    """
     if out_dir is None:
         out_dir = os.path.join(sim.CHECKPOINT_DIR, "sweep")
     overrides = {**(overrides or {}), "quiet": quiet}
+    workers = ps.resolve_workers(workers)
 
-    all_results = []
+    cells = [(config, seed) for config in configs for seed in seeds]
     for config in configs:
-        cfg_dir = os.path.join(out_dir, config["name"])
-        os.makedirs(cfg_dir, exist_ok=True)
-        for seed in seeds:
-            print(f"[sweep] config={config['name']} seed={seed} "
-                  f"({ {k: v for k, v in config.items() if k != 'name'} })")
-            result = _run_one(config, seed, overrides)
-            out_path = os.path.join(cfg_dir, f"seed{seed}.json")
-            with open(out_path, "w") as f:
-                json.dump(result, f, indent=2)
-            all_results.append(result)
-            for label, e in result["eval"].items():
-                print(f"    -> vs {label:<10} avg_reward={e['avg_reward']:.2f} "
-                      f"win_rate={e['win_rate']:.1f}%")
-            print(f"       (saved {out_path})")
+        print(f"[sweep] config={config['name']} "
+              f"({ {k: v for k, v in config.items() if k != 'name'} })")
+
+    all_results, failures = ps.run_cells(cells, out_dir, overrides, workers,
+                                         resume=resume)
+
+    if failures:
+        print("\n=== FAILED CELLS (absent from the summary below) ===")
+        for (name, seed), info in sorted(failures.items()):
+            print(f"  {name} seed={seed}  rc={info['returncode']}  "
+                  f"log={info['log']}")
+        print("  These are MISSING DATA, not zeros. A config whose cells "
+              "failed has a smaller\n  n_seeds in the table below; check that "
+              "before reading its SE.\n")
 
     summary = summarize(all_results)
     print_summary(summary)
