@@ -1,3 +1,5 @@
+"""Greedy baseline solver: the single play that places the most tiles."""
+
 import pulp
 from itertools import combinations
 from collections import namedtuple
@@ -6,8 +8,8 @@ NUM_COLORS = 4
 NUM_VALUES = 13
 NUM_REAL_TILES = NUM_COLORS * NUM_VALUES
 JOKER_INDEX = NUM_REAL_TILES
-VECTOR_LEN = NUM_REAL_TILES + 1          # 52 real tiles + the joker slot
-X_LEN = 3 * VECTOR_LEN                   # [board | hand | action]
+VECTOR_LEN = NUM_REAL_TILES + 1
+X_LEN = 3 * VECTOR_LEN
 
 MAX_COPIES = 2
 
@@ -21,6 +23,7 @@ Meld = namedtuple("Meld", ["real_indices", "num_jokers"])
 
 
 def _mask(indices):
+    """Bitmask of a sequence of tile indices."""
     m = 0
     for i in indices:
         m |= 1 << i
@@ -28,20 +31,23 @@ def _mask(indices):
 
 
 class GreedySolution:
-    """Single-action solver: place as many tiles from the rack as legally
-    possible. The meld list and the LP variables are built once in __init__
-    and reused across turns; reset() only re-derives the per-turn data."""
+    """Single-action max-tiles ILP.
+
+    Melds and LP variables are built once in __init__ and reused; reset()
+    only re-derives the per-turn position.
+    """
 
     def __init__(self):
+        """Enumerate melds and build the static LP variables (~13ms, once)."""
         self.melds = self._generate_melds()
         self.meld_masks = [_mask(m.real_indices) for m in self.melds]
         self.meld_jokers = [m.num_jokers for m in self.melds]
         self._build_static_vars()
         self.reset(hand_tails=None, board_tails=None)
 
-    # ----------------------------------------------------------- meld list
 
     def _generate_melds(self):
+        """Every distinct legal meld (groups plus runs), deduped."""
         seen = set()
         melds = []
         for real, nj in self._generate_groups() + self._generate_runs():
@@ -52,7 +58,7 @@ class GreedySolution:
         return melds
 
     def _generate_groups(self):
-        """A group at value-offset v uses slots v, v+13, v+26, v+39."""
+        """Groups at value-offset v, using slots v, v+13, v+26, v+39."""
         out = []
         for v in range(NUM_VALUES):
             slots = [v + b for b in BLOCK_STARTS]
@@ -63,8 +69,7 @@ class GreedySolution:
         return out
 
     def _generate_runs(self):
-        """A run of length L starts at slot i and covers i..i+L-1, legal only
-        while i % 13 + L <= 13 so it cannot spill into the next colour block."""
+        """Runs of length 3-5 that cannot spill into the next colour block."""
         out = []
         for i in range(NUM_REAL_TILES):
             offset = i % NUM_VALUES
@@ -79,9 +84,9 @@ class GreedySolution:
                         )
         return out
 
-    # ------------------------------------------------------- static LP vars
 
     def _build_static_vars(self):
+        """Create the x/y LP variables reused for the instance's whole life."""
         self._x_vars = [
             pulp.LpVariable(f"x_{i}", lowBound=0, upBound=MAX_COPIES, cat="Integer")
             for i in range(len(self.melds))
@@ -95,9 +100,11 @@ class GreedySolution:
         )
 
     def reset(self, hand_tails, board_tails):
-        """hand_tails / board_tails are length-53 count vectors. Any sequence
-        works (list, numpy array, torch tensor); entries are coerced to int so
-        a tensor element never leaks into the LP file handed to CBC."""
+        """Set the current position from length-53 hand/board count vectors.
+
+        Any sequence works; entries are coerced to int so a tensor element never
+        leaks into the LP file handed to CBC.
+        """
         if hand_tails is None or board_tails is None:
             self.hand_tails = self.board_tails = None
         else:
@@ -106,6 +113,7 @@ class GreedySolution:
         self._base_built = False
 
     def _ensure_base_built(self):
+        """Hand bounds plus the availability presolve, once per reset()."""
         if self._base_built:
             return
         if self.hand_tails is None or self.board_tails is None:
@@ -117,9 +125,6 @@ class GreedySolution:
             self._y_vars[t].upBound = hand[t]
         self._y_joker_var.upBound = hand[JOKER_INDEX]
 
-        # Availability presolve: a meld needs exactly one copy of each of its
-        # real slots, so it is playable only if every one of them exists in
-        # board+hand. One bitmask AND per meld. Typically leaves ~29 of 1173.
         missing = 0
         for t in range(NUM_REAL_TILES):
             if not (board[t] + hand[t]):
@@ -144,26 +149,18 @@ class GreedySolution:
         self._joker_lhs = pulp.lpSum(joker_terms)
         self._base_built = True
 
-    # -------------------------------------------------------------- solving
 
     def _x(self, action):
-        """[board | hand | action] - one flat X_LEN vector, the same layout as
-        an entry of GE's valid_x_list."""
+        """One flat [board | hand | action] vector - valid_x_list's layout."""
         return self.board_tails + self.hand_tails + action
 
     def solve(self):
-        """Return a single flat vector X = [board(53) | hand(53) | action(53)],
-        ALWAYS - never None, never a dict.
+        """Return one flat X = [board(53) | hand(53) | action(53)], ALWAYS.
 
-        The action segment holds the tiles chosen for the board. When nothing
-        is playable (infeasible LP, or an optimum that places zero tiles) the
-        action segment is all zeros, which is this environment's draw action.
-        That is a real move, not an absence of one, so the caller gets a
-        playable X in every case and needs no None branch.
-
-        Board and hand come back unchanged from the last reset(): a caller
-        matching X against candidate moves compares the action segment, and
-        carrying the position along keeps the vector self-describing.
+        Never None, never a dict. The action segment holds the tiles chosen for
+        the board, or is all zeros when nothing is playable - which is this
+        environment's draw action, so no caller needs a None branch. Board and
+        hand come back unchanged from the last reset().
         """
         self._ensure_base_built()
         draw = [0] * VECTOR_LEN

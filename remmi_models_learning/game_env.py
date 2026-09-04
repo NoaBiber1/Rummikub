@@ -1,8 +1,13 @@
+"""Game engine: Rummikub state, rules and the zero-sum terminal payoff."""
+
 import torch
 from  ilp_solution import ILP_solutions
 
 class GE:
+    """One game for `players` seats; every game in this project is 1-vs-1."""
+
     def __init__(self, players, budget=None):
+        """Build the engine with an explicit ILP budget dict, and deal."""
         if budget is None:
             raise ValueError(
                 "GE requires an explicit budget dict "
@@ -15,30 +20,29 @@ class GE:
         
 
     def play(self, x):
+        """Apply action x: place tiles when its sum is > 0, else draw one.
+
+        Advances the turn and ends the game when a hand empties or the deck is
+        exhausted. Raises ValueError on an illegal action.
+        """
         action = x[-53:]
         act_sum = action.sum().item()
 
-        # handle drop (update board and hand). NO intermediate reward: the
-        # game pays out at the end, and the dense signal is PBRS, applied
         if act_sum > 0:
             self.board += action
             self.hands[self.turn] -= action
 
-        #handle tile pull when no tiles in deck (end the game and update real score)
         elif self.pointer >= self.deck.shape[0] and act_sum == 0:
             self.done = True
             self.update_real_reward()
 
-        #handle tile pull when there is tiles in deck (update hand)
         elif act_sum == 0:
             tail = self.draw(1)
             self.hands[self.turn][tail] += 1
 
-        #raise an error when there is unvalid action
         else:
             raise ValueError(f"illegal action passed to play(): act_sum={act_sum} (must be >0 or ==0)")
 
-        #check if the player end is tails to end the game
         done_by_hand = self.hands[self.turn].sum().item()
         if done_by_hand == 0:
             self.done = True
@@ -48,19 +52,17 @@ class GE:
         self.turn =  (self.turn + 1) % self.players
 
     def is_Done(self):
+        """True once the game has ended."""
         return self.done
 
     def hand_score(self, player):
+        """Sum of `player`'s tile values (1-13 by position, joker 30)."""
         positions = torch.arange(1, 54, dtype=torch.float32)
         weights = torch.where(positions == 53, torch.tensor(30.0), ((positions - 1) % 13) + 1)
         return torch.sum(self.hands[player] * weights)
 
     def update_real_reward(self):
-        # self.reward holds ONLY the terminal payoff - there is no accumulator
-        # to subtract, so there is nothing here to alias. (A previous version
-        # did `temp = self.reward` and later `self.reward -= temp`; tensor
-        # assignment binds the same object, the in-place writes below mutated
-        # `temp` too, and every reward came out exactly 0.)
+        """Write the zero-sum terminal payoff into self.reward."""
         if self.winner != -1:
             total = 0.0
             for i in range(0, self.players):
@@ -81,38 +83,25 @@ class GE:
             self.reward[winner_idx] = total
 
     def get_reward(self, player):
-        """The TRUE game reward for `player`: 0 until the game ends, then the
-        zero-sum payoff. Indexed by the ARGUMENT, never by self.turn - turn has
-        already advanced by the time a caller asks, and any caller asking about
-        a seat that is not to move would silently get someone else's number.
+        """The TRUE reward for `player`.
 
-        Deliberately unshaped, so history["episode_rewards"] and the
-        vs-random / vs-greedy benchmarks keep measuring game outcomes. Shaping
-        is added on top by the agent (simulation._play_episode)."""
+        0 until the game ends, then the zero-sum payoff scaled by 1/100.
+
+        Indexed by the ARGUMENT, never by self.turn, which has already advanced
+        by the time a caller asks. Deliberately unshaped: shaping is added on
+        top by the agent (simulation._play_episode).
+        """
         if not self.done:
             return torch.tensor(0.0)
         return self.reward[player] / 100
 
     def potential(self, player):
-        """PHI(s) for potential-based reward shaping, from `player`'s seat.
+        """PHI(s) for potential-based shaping, from `player`'s seat.
 
-        Score differential, on the same 1/100 scale as get_reward:
-            PHI(s) = (sum of opponents' hand scores - own hand score) / 100
-        At a hand-emptying terminal this is EXACTLY the true terminal reward
-        for 2 players, which is what a good potential should be: an estimate of
-        V*. It answers "how far ahead am I on the quantity that decides the
-        game", not "have I dumped tiles" - the latter is the greedy heuristic
-        and would bias learning towards the baseline the agent is benchmarked
-        against.
-
-        RETURNS 0.0 AT TERMINAL STATES, unconditionally. Ng et al. (1999)
-        require PHI(terminal) = 0 for episodic tasks; without it the shaping
-        does not telescope away and policy invariance is lost. Enforcing it
-        here rather than at the call site means no caller can forget.
-
-        (For >2 players the sum-of-opponents form is no longer exactly the
-        terminal payoff for a loser. Every game here is 1-vs-1, but if that
-        ever changes, revisit this.)"""
+        (sum of opponents' hand scores - own hand score) / 100, on get_reward's
+        scale, and 0.0 at any terminal state - which Ng et al. (1999) require
+        for the shaping to telescope away. Exact only for 2 players.
+        """
         if self.done:
             return 0.0
         own = self.hand_score(player)
@@ -120,6 +109,7 @@ class GE:
         return float((others - own) / 100)
 
     def get_winner(self):
+        """Winning seat index, or None while the game is unfinished."""
         if not self.done:
             return None
         if self.winner != -1:
@@ -128,11 +118,13 @@ class GE:
         return int(torch.argmin(scores).item())
 
     def shuffle(self):
+        """Shuffle the deck and rewind the pointer."""
         perm = torch.randperm(self.deck.shape[0])
         self.deck = self.deck[perm]
         self.pointer = 0
 
     def draw(self, n=1):
+        """The next n tiles; raises RuntimeError when the deck is empty."""
         if self.pointer + n > self.deck.shape[0]:
             raise RuntimeError("deck exhausted")
 
@@ -141,11 +133,13 @@ class GE:
         return tails
 
     def init_handes(self):
+        """Deal 14 tiles to every seat."""
         tails = self.draw(self.players*14).view(self.players, 14)
         draws = torch.ones_like(tails, dtype=self.hands.dtype)
         self.hands.scatter_add_(1, tails, draws)
 
     def reset(self):
+        """Start a fresh game: new board, deck, hands, turn and winner."""
         self.board = torch.zeros(53)
         self.deck = torch.arange(53).repeat(2)
         self.hands = torch.zeros(self.players, 53)
@@ -157,6 +151,11 @@ class GE:
         self.init_handes()
 
     def get_valid_x_list(self):
+        """Every legal x = [board | hand | action] for the player to move.
+
+        Includes the all-zero draw action whenever the deck still holds tiles.
+        An empty list means nothing is legal, and sets self.done.
+        """
         hand = self.hands[self.turn]
         self.ilp_solver.reset(
             hand_tails=hand.round().int().tolist(),

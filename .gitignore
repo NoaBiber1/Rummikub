@@ -119,7 +119,7 @@ app.*.symbols
 !/dev/ci/**/Gemfile.lock
 
 .cursor
-remmi_models_learning/for_claude.md
-remmi_models_learning/checkpoints
+for_claude.md
+checkpoints
 __pycache__/
 run.py

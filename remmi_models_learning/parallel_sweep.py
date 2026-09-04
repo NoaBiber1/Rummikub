@@ -1,33 +1,12 @@
-"""Parallel cell execution for seed_sweep.
+"""Parallel cell execution for seed_sweep: one subprocess per cell.
 
-WHY SUBPROCESSES AND NOT multiprocessing. Three constraints rule out the
-obvious answer, and they were each verified rather than assumed:
-
-  1. The project's entry pattern is `python - <<'PY' ... PY`, i.e. __main__ is
-     STDIN. multiprocessing's "spawn" and "forkserver" start methods both
-     re-import __main__ in the child; with no __file__ to import, both die with
-     BrokenProcessPool. Measured: spawn FAILS, forkserver FAILS, fork works.
-  2. That leaves "fork", which is the one start method the PyTorch docs warn
-     against: forking an interpreter that has already initialised an OpenMP
-     thread pool can deadlock in the child, intermittently and unreproducibly -
-     the worst possible failure mode for a job that runs for days.
-  3. A cell that dies (OOM, a NaN fire alarm, a CBC crash) must not take the
-     other cells with it, and a sweep killed at hour six must not lose the
-     cells that had already finished.
-
-An independent `python -c "import seed_sweep; seed_sweep._cell_main()"` per
-cell satisfies all three. Each cell gets a clean interpreter, a clean torch, a
-clean ILP solver and its own address space; the parent never imports anything
-into a child; and the result arrives through the JSON file the cell already
-wrote, so no IPC and nothing to pickle. Startup costs a few seconds of torch
-import against a cell that runs for hours.
-
-WHAT IT DOES NOT CHANGE. Every cell seeds itself from its own config
-(simulation._seed_all / _seed_episode), and nothing crosses process
-boundaries, so a parallel sweep produces bit-identical results to a serial one.
-Cell-level parallel safety of the ILP hot path - the one shared resource, via
-CBC's temp files - is verified separately in test_parallel_ilp_safety.py
-(pulp prefixes with uuid4().hex; 0 mismatches serial vs 4-way parallel).
+Subprocesses, not multiprocessing: spawn and forkserver both re-import
+__main__, which does not exist when the entry point is stdin; fork can
+deadlock a forked OpenMP pool; and one dead cell must not take the sweep
+with it. Each cell gets a clean interpreter and returns its result
+through the JSON file it writes, so there is no IPC and nothing to
+pickle. Cells seed themselves, so a parallel sweep is bit-identical to a
+serial one.
 """
 import json
 import os
@@ -36,10 +15,6 @@ import sys
 import time
 import traceback
 
-# One thread per worker. Without this each of N cells asks BLAS/OpenMP for as
-# many threads as there are cores, so N x C threads fight over C cores and the
-# sweep gets SLOWER as workers go up. The ILP is ~95% of the runtime and is a
-# single-threaded subprocess anyway, so nothing here wants more than one.
 _SINGLE_THREAD_ENV = {
     "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
@@ -51,20 +26,16 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def cell_paths(out_dir, name, seed):
-    """Where a cell's result, error and log land. One directory per config, so
-    a config's seeds sit together and a whole config can be deleted to re-run
-    it."""
+    """(config dir, result path, error path, log path) for one cell."""
     cfg_dir = os.path.join(out_dir, name)
     stem = os.path.join(cfg_dir, f"seed{seed}")
     return cfg_dir, f"{stem}.json", f"{stem}.error.json", f"{stem}.log"
 
 
-# --------------------------------------------------------------- the child
-
 def _cell_main():
-    """Entry point for one cell's subprocess. Reads a JSON spec on stdin,
-    runs the cell, writes the result. Never returns a value to the parent -
-    the file IS the channel."""
+    """Child entry point: read a cell spec on stdin, run it, write the result.
+    The file IS the channel back to the parent.
+    """
     import seed_sweep
 
     spec = json.load(sys.stdin)
@@ -74,10 +45,6 @@ def _cell_main():
         result = seed_sweep._run_one(spec["config"], spec["seed"],
                                      spec["overrides"])
     except BaseException:
-        # Written as a file rather than raised into the void: the parent is
-        # not attached to this stderr in any useful way, and a sweep that
-        # loses the traceback of the one cell that failed is a sweep you have
-        # to run twice.
         os.makedirs(os.path.dirname(err_path), exist_ok=True)
         with open(err_path, "w") as f:
             json.dump({"config": spec["config"]["name"], "seed": spec["seed"],
@@ -87,15 +54,12 @@ def _cell_main():
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
-    # Written LAST and only on success, so a half-written result from a cell
-    # killed mid-run cannot be mistaken for a finished one by --resume.
     if os.path.exists(err_path):
         os.remove(err_path)
 
 
-# -------------------------------------------------------------- the parent
-
 def _launch(spec, log_path):
+    """Start one cell subprocess; returns (process, open log file)."""
     env = {**os.environ, **_SINGLE_THREAD_ENV}
     env["PYTHONPATH"] = PROJECT_DIR + os.pathsep + env.get("PYTHONPATH", "")
     log = open(log_path, "w")
@@ -109,10 +73,9 @@ def _launch(spec, log_path):
 
 
 def _check_serializable(config, overrides):
-    """A cell spec crosses a process boundary as JSON, so a config carrying a
-    live object (an nn.Module test opponent, a callable) cannot be sent.
-    Caught here with a usable message rather than as a TypeError from inside
-    json.dumps three frames down."""
+    """Raise a usable error if a cell spec cannot be sent as JSON - a config
+    carrying a live net or callable has to run with workers=1.
+    """
     try:
         json.dumps({"config": config, "overrides": overrides})
     except TypeError as exc:
@@ -127,8 +90,7 @@ def run_cells(cells, out_dir, overrides, workers, resume=True, poll=2.0):
     """Run `cells` (a list of (config, seed)) at most `workers` at a time.
 
     Returns (results, failures) with results in the ORDER GIVEN, never in
-    completion order - a summary table whose row order depended on which cell
-    happened to finish first would not be diffable between runs.
+    completion order. A failed cell is reported and skipped, not fatal.
     """
     pending = list(cells)
     done, failed, running = {}, {}, []
@@ -136,8 +98,6 @@ def run_cells(cells, out_dir, overrides, workers, resume=True, poll=2.0):
     started = 0
     t0 = time.time()
 
-    # Resume first, so the "N cells" the progress line counts is the number
-    # actually about to run.
     if resume:
         still = []
         for config, seed in pending:
@@ -188,8 +148,10 @@ def run_cells(cells, out_dir, overrides, workers, resume=True, poll=2.0):
                 result = json.load(open(out_path))
                 done[key] = result
                 evals = "  ".join(
-                    f"vs {label} {e['avg_reward']:.2f}"
-                    for label, e in result["eval"].items())
+                    f"vs {label} "
+                    + ("n/a" if e.get("avg_reward") is None
+                       else f"{e['avg_reward']:.2f}")
+                    for label, e in (result.get("eval") or {}).items())
                 print(f"[sweep] done  {config['name']} seed={seed} "
                       f"({mins:.1f} min)  {evals}")
             else:
@@ -202,9 +164,6 @@ def run_cells(cells, out_dir, overrides, workers, resume=True, poll=2.0):
                         pass
                 failed[key] = {"returncode": proc.returncode, "log": log_path,
                                "error": err_path if os.path.exists(err_path) else None}
-                # A failed cell does NOT stop the sweep. One diverging lr is an
-                # expected outcome of a sweep, not a reason to lose the other
-                # 26 cells - the test plan's own rule is "discard that cell".
                 print(f"[sweep] FAIL  {config['name']} seed={seed} "
                       f"({mins:.1f} min, rc={proc.returncode}) {detail}\n"
                       f"              log: {log_path}")
@@ -217,12 +176,8 @@ def run_cells(cells, out_dir, overrides, workers, resume=True, poll=2.0):
 
 
 def resolve_workers(workers):
-    """`workers='auto'` -> one per core. Deliberately not the default.
-
-    Each cell is a full interpreter with its own torch and its own replay
-    buffer, so worker count is bounded by MEMORY as often as by cores: at
-    buffer_size=20000 a cell holds roughly 100-150 MB of transitions on top of
-    ~300 MB of torch. Budget ~0.5 GB per worker and check before raising this.
+    """workers='auto' -> one per core; otherwise validate an integer >= 1.
+    Worker count is bounded by memory as often as by cores (~0.5 GB each).
     """
     if workers == "auto":
         return max(1, os.cpu_count() or 1)

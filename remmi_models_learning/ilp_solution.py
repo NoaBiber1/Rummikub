@@ -1,3 +1,5 @@
+"""Legal-move engine: the ILP that enumerates a turn's legal actions."""
+
 import pulp
 from itertools import combinations
 from collections import namedtuple
@@ -17,51 +19,19 @@ MAX_JOKERS = 2
 
 BLOCK_STARTS = tuple(range(0, NUM_REAL_TILES, NUM_VALUES))
 
-# Big enough that one extra tile always outranks any value gain: the whole
-# deck is worth 4*2*(1+..+13) + 2*30 = 788 points.
 LEX_WEIGHT = 10000
 
 Meld = namedtuple("Meld", ["real_indices", "num_jokers"])
 
-# [STALE-FIX] Two hardcoded presets used to live here - DEFAULT_BUDGET
-# (24/4/4) and TRAINING_BUDGET (12/2/2, silently used by ILP_solutions()
-# whenever no budget was passed, i.e. every call in this project's actual
-# pipeline: game_env.GE never passed one). Both are gone. `budget` is now a
-# REQUIRED argument to ILP_solutions.__init__ - see validate_budget() and the
-# for_claude.md section on config propagation for the full call chain from
-# seed_sweep.BASE_CONFIG["budget"] down to here. The two old dicts' VALUES
-# are preserved as the config default (simulation.DEFAULTS["budget"] =
-# 12/2/2, matching the old always-used TRAINING_BUDGET) so an existing config
-# that doesn't set "budget" gets identical behavior to before.
 BUDGET_KEYS = ("max_actions", "alt_counts", "alts_per_count")
 
 
 def validate_budget(budget):
-    """Fail-loudly shape check for a budget dict: exactly BUDGET_KEYS, each a
-    non-negative int, with max_actions specifically required to be >= 1.
-    Returns a clean copy (extra keys dropped) so downstream code can index it
-    without a KeyError guard.
+    """Validate a budget dict and return a normalized copy of it.
 
-    max_actions=0 is NOT allowed, and not just as a stylistic minimum:
-    build_action_set's final line is `return actions[:cap]`, and the ladder's
-    first, always-legal action is added to `actions` unconditionally BEFORE
-    that slice - so max_actions=0 would silently turn a real legal move into
-    an empty action list, and GE.get_valid_x_list() reads an empty list as
-    "no legal moves, game over" (section 9). That is a correctness bug, not
-    a preference, so it is rejected here rather than merely discouraged.
-    alt_counts and alts_per_count MAY be 0 - that is the deliberate
-    ladder-only budget the QUICK ORIENTATION smoke-test recipe (2) uses, and
-    build_action_set's tier-2 loop (`counts[:alt_counts]`, `range(alts_per_count)`)
-    degrades to a no-op cleanly at 0, adding nothing and breaking nothing.
-
-    Deliberately a free function, not a method: ILP_solutions.__init__ below
-    calls it, but so does simulation._cfg, which validates config["budget"]
-    once per run - before any training time is spent - WITHOUT constructing
-    a full ILP_solutions (whose __init__ enumerates ~1173 melds, ~13ms,
-    section 2). A bad budget now fails at config time, the same treatment
-    tau/updates_per_step (via learn.effective_tau) and epsilon/epsilon_min/
-    epsilon_decay already get in simulation._cfg, rather than surfacing deep
-    inside build_action_set the first time a turn actually needs the cap.
+    Requires exactly BUDGET_KEYS, ints only, max_actions >= 1 and the other
+    two >= 0. A free function so simulation._cfg can validate config time
+    without constructing an ILP_solutions.
     """
     if not isinstance(budget, dict):
         raise TypeError(
@@ -80,10 +50,12 @@ def validate_budget(budget):
 
 
 def tile_point_value(index):
+    """Face value 1-13 of a real tile index."""
     return index % NUM_VALUES + 1
 
 
 def _mask(indices):
+    """Bitmask of a sequence of tile indices."""
     m = 0
     for i in indices:
         m |= 1 << i
@@ -91,11 +63,10 @@ def _mask(indices):
 
 
 class ILP_solutions:
+    """Builds one turn's action set from the current hand and board."""
+
     def __init__(self, budget):
-        """`budget` is REQUIRED (no default, no hardcoded fallback - see the
-        note above BUDGET_KEYS). Every caller in this project's pipeline
-        ultimately sources it from config["budget"] via game_env.GE, which
-        itself now requires an explicit budget for the same reason."""
+        """Validate the budget, enumerate melds, build static LP vars."""
         self.budget = validate_budget(budget)
         self.melds = self._generate_melds()
         self.meld_masks = [_mask(m.real_indices) for m in self.melds]
@@ -104,9 +75,9 @@ class ILP_solutions:
         self._solve_id = 0
         self.reset(hand_tails=None, board_tails=None)
 
-    # ----------------------------------------------------------- meld list
 
     def _generate_melds(self):
+        """Every distinct legal meld (groups plus runs), deduped."""
         seen = set()
         melds = []
         for real, nj in self._generate_groups() + self._generate_runs():
@@ -117,7 +88,7 @@ class ILP_solutions:
         return melds
 
     def _generate_groups(self):
-        """A group at value-offset v uses slots v, v+13, v+26, v+39."""
+        """Groups at value-offset v, using slots v, v+13, v+26, v+39."""
         out = []
         for v in range(NUM_VALUES):
             slots = [v + b for b in BLOCK_STARTS]
@@ -128,8 +99,7 @@ class ILP_solutions:
         return out
 
     def _generate_runs(self):
-        """A run of length L starts at slot i and covers i..i+L-1, legal only
-        while i % 13 + L <= 13 so it cannot spill into the next colour block."""
+        """Runs of length 3-5 that cannot spill into the next colour block."""
         out = []
         for i in range(NUM_REAL_TILES):
             offset = i % NUM_VALUES
@@ -144,9 +114,9 @@ class ILP_solutions:
                         )
         return out
 
-    # ------------------------------------------------------- static LP vars
 
     def _build_static_vars(self):
+        """Create the x/y LP variables reused for the instance's whole life."""
         self._x_vars = [
             pulp.LpVariable(f"x_{i}", lowBound=0, upBound=MAX_COPIES, cat="Integer")
             for i in range(len(self.melds))
@@ -160,9 +130,11 @@ class ILP_solutions:
         )
 
     def reset(self, hand_tails, board_tails):
-        """hand_tails / board_tails are length-53 count vectors. Any sequence
-        works (list, numpy array, torch tensor); entries are coerced to int so
-        a tensor element never leaks into the LP file handed to CBC."""
+        """Set the current position from length-53 hand/board count vectors.
+
+        Any sequence works (list, numpy, torch); entries are coerced to int so a
+        tensor element never leaks into the LP file handed to CBC.
+        """
         if hand_tails is None or board_tails is None:
             self.hand_tails = self.board_tails = None
         else:
@@ -171,6 +143,7 @@ class ILP_solutions:
         self._base_built = False
 
     def _ensure_base_built(self):
+        """Hand bounds plus the availability presolve, once per reset()."""
         if self._base_built:
             return
         if self.hand_tails is None or self.board_tails is None:
@@ -182,9 +155,6 @@ class ILP_solutions:
             self._y_vars[t].upBound = hand[t]
         self._y_joker_var.upBound = hand[JOKER_INDEX]
 
-        # Availability presolve: a meld needs exactly one copy of each of its
-        # real slots, so it is playable only if every one of them exists in
-        # board+hand. One bitmask AND per meld. Typically leaves ~29 of 1173.
         missing = 0
         for t in range(NUM_REAL_TILES):
             if not (board[t] + hand[t]):
@@ -210,6 +180,7 @@ class ILP_solutions:
         self._base_built = True
 
     def _build_base_problem(self):
+        """A fresh LpProblem with only the tile and joker balance rows."""
         self._ensure_base_built()
         prob = pulp.LpProblem("rummikub_turn", pulp.LpMaximize)
         for t in range(NUM_REAL_TILES):
@@ -223,20 +194,23 @@ class ILP_solutions:
         )
         return prob
 
-    # ------------------------------------------------------------ objective
 
     def _tiles_expr(self):
+        """Objective: count of hand tiles placed."""
         return pulp.lpSum(self._y_vars) + self._y_joker_var
 
     def _value_expr(self):
+        """Objective: point value of the hand tiles placed."""
         return pulp.lpSum(
             self._y_vars[t] * tile_point_value(t) for t in range(NUM_REAL_TILES)
         ) + self._y_joker_var * JOKER_VALUE
 
     def _tiles_then_value(self):
+        """Lexicographic objective: tiles first, value as the tie-break."""
         return LEX_WEIGHT * self._tiles_expr() + self._value_expr()
 
     def _extract(self, sources):
+        """Solved y variables as an action dict."""
         y = [int(round(v.value())) for v in self._y_vars]
         yj = int(round(self._y_joker_var.value()))
         value = sum(y[t] * tile_point_value(t) for t in range(NUM_REAL_TILES))
@@ -248,13 +222,9 @@ class ILP_solutions:
             "sources": list(sources),
         }
 
-    # -------------------------------------------------------- no-good cuts
 
     def _add_nogoods(self, prob, exclude, tag):
-        """Order encoding (y_t = sum of binaries, b_0 >= b_1) so each y-vector
-        has one binary pattern and a single row excludes exactly one point.
-        Slots holding a single copy are already binary and are reused as-is,
-        so a typical hand adds only one or two genuinely new binaries."""
+        """Exclude each returned y-vector with one order-encoded cut."""
         if not exclude:
             return
         slots = {}
@@ -281,13 +251,14 @@ class ILP_solutions:
                 f"nogood_{tag}_{si}",
             )
 
-    # -------------------------------------------------------------- solving
 
     def _solve(self, objective, sources, tiles_eq=None, jokers_max=None,
                jokers_min=None, exclude=()):
-        """One ILP solve under optional side constraints. Returns an action
-        dict, or None if infeasible or if the only answer is the passive
-        place-nothing solution."""
+        """One ILP solve under optional side constraints.
+
+        Returns an action dict, or None if infeasible or if the only answer is
+        the passive place-nothing solution.
+        """
         self._solve_id += 1
         tag = str(self._solve_id)
         prob = self._build_base_problem()
@@ -306,22 +277,12 @@ class ILP_solutions:
         sol = self._extract(sources)
         return sol if sol["tiles_placed"] > 0 else None
 
-    # ------------------------------------------------------- the action set
 
     def build_action_set(self):
-        """Return a flat list of distinct legal actions, richest first.
+        """Flat list of distinct legal actions, richest first.
 
-        Three tiers:
-          1. COMMITMENT LADDER — the best play at each achievable tile count,
-             from "empty the rack" down to "place the bare minimum". Tile count
-             is the axis that matters: how much of the rack you commit now
-             versus what you keep for future melds.
-          2. COMPOSITION ALTERNATIVES — at the top rungs, further plays using
-             the SAME number of tiles from different slots. Same commitment,
-             different hand kept back.
-          3. JOKER ANCHORS — the best play that keeps every joker and the best
-             that spends one, whenever the array is otherwise one-sided.
-
+        Three tiers: the commitment ladder (best play at each achievable tile
+        count), composition alternatives at the top rungs, and joker anchors.
         Returns [] when no legal move exists; the caller offers a draw instead.
         """
         if self.hand_tails is None or self.board_tails is None:
@@ -333,6 +294,7 @@ class ILP_solutions:
         actions, seen = [], {}
 
         def add(sol):
+            """Add a solution, merging source tags on a duplicate."""
             if sol is None:
                 return
             key = tuple(sol["dropped_vector"])
@@ -344,7 +306,6 @@ class ILP_solutions:
             seen[key] = sol
             actions.append(sol)
 
-        # --- tier 1: the ladder ---------------------------------------------
         top = self._solve(self._tiles_then_value(), ["max_tiles"])
         if top is None:
             return []
@@ -359,7 +320,6 @@ class ILP_solutions:
                 add(sol)
                 counts.append(k)
 
-        # --- tier 2: alternatives at the richest rungs ----------------------
         for k in counts[: self.budget["alt_counts"]]:
             excl = [a["dropped_vector"] for a in actions if a["tiles_placed"] == k]
             for _ in range(self.budget["alts_per_count"]):
@@ -373,7 +333,6 @@ class ILP_solutions:
                 add(sol)
                 excl.append(sol["dropped_vector"])
 
-        # --- tier 3: joker anchors ------------------------------------------
         if self.hand_tails[JOKER_INDEX] > 0 and len(actions) < cap:
             spent = {a["jokers_placed"] for a in actions}
             if 0 not in spent:

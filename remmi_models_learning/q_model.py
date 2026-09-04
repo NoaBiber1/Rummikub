@@ -1,9 +1,23 @@
+"""The Q-network: one scalar Q for one (state, candidate-action) pair."""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class MLP(nn.Module):
+    """Q(s,a) over the 159-dim [board | hand | action] input.
+
+    Scores state-ACTION pairs rather than emitting one Q per action: the
+    legal set changes every turn, so there is no fixed action space. Owns
+    its own Adam optimizer, which train_step drives.
+    """
+
     def __init__(self, input_dim=159, hidden_dim=256, seed=42, lr=0.001):
+        """Build the 159-256-256-256-1 net, seed torch, init weights, add Adam.
+
+        `seed` seeds torch GLOBALLY, so pass it explicitly: the default would
+        make every net in a sweep identical and reset the RNG mid-run.
+        """
         super().__init__()
         torch.manual_seed(seed)
         self.fc1 = nn.Linear(input_dim, hidden_dim)
@@ -14,6 +28,7 @@ class MLP(nn.Module):
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
     def _init_weights(self, input_dim, hidden_dim):
+        """Initialise every weight and bias from N(0, 0.01)."""
         std = 0.01
         nn.init.normal_(self.fc1.weight, mean=0.0, std=std)
         nn.init.normal_(self.fc1.bias, mean=0.0, std=std)
@@ -25,6 +40,7 @@ class MLP(nn.Module):
         nn.init.normal_(self.fc4.bias, mean=0.0, std=std)
 
     def forward(self, x):
+        """Scalar Q-value for x."""
         a1 = F.relu(self.fc1(x))
         a2 = F.relu(self.fc2(a1))
         a3 = F.relu(self.fc3(a2))
@@ -32,6 +48,7 @@ class MLP(nn.Module):
         return q_value
 
     def print_weights(self):
+        """Print per-layer shape/mean/std/min/max and raw tensors."""
         for name, layer in [
             ("fc1", self.fc1),
             ("fc2", self.fc2),
