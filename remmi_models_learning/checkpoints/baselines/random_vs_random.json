@@ -1,0 +1,13 @@
+{
+  "main": "random",
+  "opponent": "random",
+  "games": 100,
+  "eval_seed_base": 10000,
+  "avg_reward": -0.003099999167025089,
+  "avg_reward_se": 0.02269458840718292,
+  "win_rate": 53.0,
+  "win_rate_se": 4.990991885387111,
+  "terminal_games": 100,
+  "decided_games": 100,
+  "avg_turns": 35.76
+}

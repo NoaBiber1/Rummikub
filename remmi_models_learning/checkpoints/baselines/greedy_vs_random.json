@@ -1,0 +1,13 @@
+{
+  "main": "greedy",
+  "opponent": "random",
+  "games": 100,
+  "eval_seed_base": 10000,
+  "avg_reward": 0.11269999969750642,
+  "avg_reward_se": 0.02174315407809394,
+  "win_rate": 75.0,
+  "win_rate_se": 4.330127018922194,
+  "terminal_games": 100,
+  "decided_games": 100,
+  "avg_turns": 34.36
+}

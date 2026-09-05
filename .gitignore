@@ -120,6 +120,5 @@ app.*.symbols
 
 .cursor
 for_claude.md
-checkpoints
 __pycache__/
 run.py

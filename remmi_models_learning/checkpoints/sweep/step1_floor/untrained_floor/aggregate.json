@@ -1,0 +1,133 @@
+{
+  "schema": "block-log/1",
+  "config": "untrained_floor",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "n_seeds": 3,
+  "aggregation": {
+    "variance_ddof": 1,
+    "definition": "mean and sample variance ACROSS SEEDS at each block; seeds reporting no data at a block are dropped and counted in n_seeds"
+  },
+  "train": null,
+  "test": {
+    "opponents": {
+      "greedy": [
+        {
+          "block": 1,
+          "episode": 0,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": {
+              "mean": -0.35033333303406833,
+              "variance": 0.005475863245347468,
+              "std": 0.07399907597630843,
+              "n_seeds": 3,
+              "per_seed": {
+                "0": -0.2853999986499548,
+                "1": -0.3347000022046268,
+                "2": -0.43089999824762343
+              }
+            },
+            "win_rate": {
+              "mean": 8.0,
+              "variance": 21.0,
+              "std": 4.58257569495584,
+              "n_seeds": 3,
+              "per_seed": {
+                "0": 9.0,
+                "1": 12.0,
+                "2": 3.0
+              }
+            }
+          },
+          "counts": {
+            "decided_games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            },
+            "games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            },
+            "terminal_games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            }
+          }
+        }
+      ],
+      "random": [
+        {
+          "block": 1,
+          "episode": 0,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": {
+              "mean": -0.36680000081658365,
+              "variance": 0.01150260988313459,
+              "std": 0.10725022090016686,
+              "n_seeds": 3,
+              "per_seed": {
+                "0": -0.31170000152662397,
+                "1": -0.4904000001586974,
+                "2": -0.2983000007644296
+              }
+            },
+            "win_rate": {
+              "mean": 12.333333333333334,
+              "variance": 26.333333333333336,
+              "std": 5.131601439446884,
+              "n_seeds": 3,
+              "per_seed": {
+                "0": 18.0,
+                "1": 11.0,
+                "2": 8.0
+              }
+            }
+          },
+          "counts": {
+            "decided_games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            },
+            "games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            },
+            "terminal_games": {
+              "total": 300,
+              "per_seed": {
+                "0": 100,
+                "1": 100,
+                "2": 100
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

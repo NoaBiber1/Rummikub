@@ -1,0 +1,45 @@
+{
+  "wall_seconds": 525.228,
+  "ilp_seconds": 509.2,
+  "ilp_share_pct": 96.9,
+  "turns": 2192,
+  "episodes": 50,
+  "blocks": 2,
+  "valid_x_calls": 4392,
+  "ilp_solves": 24333,
+  "greedy_solves": 371,
+  "ms_per_turn": 239.61,
+  "ms_per_solve": 20.93,
+  "valid_x_calls_per_turn": 2.004,
+  "solves_per_valid_x_call": 5.54,
+  "solves_per_turn": 11.101,
+  "config": {
+    "name": "step0",
+    "training_iterations": 2,
+    "train_episodes_per_block": 15,
+    "test_episodes_per_block": 5,
+    "test_opponents": [
+      "random",
+      "greedy"
+    ],
+    "budget": {
+      "max_actions": 12,
+      "alt_counts": 2,
+      "alts_per_count": 2
+    },
+    "learning_method": "DQN",
+    "n_step": 1,
+    "reward_shaping": true,
+    "gamma": 0.99,
+    "lr": 0.001,
+    "tau": 0.005,
+    "updates_per_step": 4,
+    "epsilon": 1.0,
+    "epsilon_decay": 0.995,
+    "epsilon_min": 0.05,
+    "buffer_size": 20000,
+    "min_buffer_size": 500,
+    "seed": 0,
+    "eval_seed_base": 10000
+  }
+}

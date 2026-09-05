@@ -26,11 +26,11 @@ from simulation import simulation
 BASE_CONFIG = dict(
     training_iterations=10,
     train_episodes_per_block=100,
-    test_episodes_per_block=20,
+    test_episodes_per_block=30,
     budget=dict(max_actions=12, alt_counts=2, alts_per_count=2),
     learning_method="DQN",
     n_step=1,
-    reward_shaping=True,
+    reward_shaping=False,
     gamma=0.99,
     lr=0.001,
     tau=0.005,
