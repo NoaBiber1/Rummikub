@@ -122,3 +122,4 @@ app.*.symbols
 for_claude.md
 __pycache__/
 run.py
+plots/
