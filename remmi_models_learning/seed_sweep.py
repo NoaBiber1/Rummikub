@@ -24,30 +24,27 @@ import simulation as sim
 from simulation import simulation
 
 BASE_CONFIG = dict(
-    training_iterations=10,
-    train_episodes_per_block=100,
-    test_episodes_per_block=30,
+    training_iterations=20,
+    train_episodes_per_block=200,
+    test_episodes_per_block=100,
     budget=dict(max_actions=12, alt_counts=2, alts_per_count=2),
     learning_method="DQN",
     n_step=1,
     reward_shaping=False,
     gamma=0.99,
-    lr=0.001,
-    tau=0.005,
-    updates_per_step=4,
+    lr=3e-4,
+    tau=0.001,
+    updates_per_step=2,
     epsilon=1.0,
-    epsilon_decay=0.995,
+    epsilon_decay=0.99626,
     epsilon_min=0.05,
-    buffer_size=20000,
+    buffer_size=100000,
     test_opponents=["random", "greedy"],
 )
 
 SCORE_OPPONENT = "random"
-
-
 CONFIGS = [dict(name="baseline")]
-
-TRAINING_SEEDS = [0, 1, 2]
+TRAINING_SEEDS = [0, 1, 2, 3, 4, 5, 6, 7]
 EVAL_SEED_BASE = 10_000
 
 
