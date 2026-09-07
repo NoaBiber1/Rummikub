@@ -24,7 +24,7 @@ from game_env import GE
 from greedy_alg import GreedySolution
 from ilp_solution import validate_budget
 from replay_buffer import ReplayBuffer
-from q_model import MLP
+from q_model import MLP, Q_INIT_MODES as MLP_INIT_MODES
 
 online_net = None
 opponent_net = None
@@ -44,6 +44,10 @@ CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "online_net.pt")
 
 _REQUIRED = object()
 
+AUTO = "auto"
+
+TRAIN_OPPONENT_KINDS = ("self", "greedy", "random")
+
 DEFAULTS = dict(
     training_iterations=_REQUIRED,
     train_episodes_per_block=_REQUIRED,
@@ -62,9 +66,17 @@ DEFAULTS = dict(
     buffer_size=_REQUIRED,
     min_buffer_size=500,
     batch_size=128,
+    huber_delta=None,
+    grad_clip=None,
+    target_clip=None,
+    q_hidden_dim=256,
+    q_features=True,
+    q_layer_norm=True,
+    q_init="kaiming",
     opponent_update_every=50,
     opponent_pool_size=5,
     train_opponent_epsilon=0.0,
+    train_opponent_mix=None,
     test_opponents=_REQUIRED,
     eval_seed_base=_REQUIRED,
     seed=None,
@@ -120,7 +132,76 @@ def _cfg(config):
             f"({cfg['min_buffer_size']!r}) - otherwise warmup can never "
             f"complete and the run silently never trains"
         )
+    cfg["target_clip"] = _resolve_target_clip(cfg)
+    for key in ("huber_delta", "grad_clip", "target_clip"):
+        learn._validate_positive(cfg[key], key)
+    if not isinstance(cfg["q_hidden_dim"], int) \
+            or isinstance(cfg["q_hidden_dim"], bool) or cfg["q_hidden_dim"] < 1:
+        raise ValueError(
+            f"q_hidden_dim must be an integer >= 1, got {cfg['q_hidden_dim']!r}")
+    for key in ("q_features", "q_layer_norm"):
+        if not isinstance(cfg[key], bool):
+            raise TypeError(f"{key} must be a bool, got {cfg[key]!r}")
+    if cfg["q_init"] not in MLP_INIT_MODES:
+        raise ValueError(
+            f"q_init must be one of {MLP_INIT_MODES}, got {cfg['q_init']!r}")
+    cfg["train_opponent_mix"] = _resolve_opponent_mix(cfg["train_opponent_mix"])
     return cfg
+
+
+def _resolve_target_clip(cfg):
+    """`target_clip` as a number or None, with 'auto' resolved HERE.
+
+    Resolved at config time rather than at first use, so `full_config` -
+    and therefore the cache fingerprint - records the bound that was
+    actually applied instead of the word that stood for it.
+
+    'auto' is the largest value the discounted return can physically take:
+    the zero-sum payoff over a deck worth MAX_DECK_VALUE, on get_reward's
+    1/100 scale. With shaping on, the shaped return also carries a
+    potential term bounded by the same quantity, so the budget doubles.
+    """
+    value = cfg["target_clip"]
+    if value != AUTO:
+        return value
+    bound = ev.MAX_POSSIBLE_REWARD
+    return 2.0 * bound if cfg["reward_shaping"] else bound
+
+
+def _resolve_opponent_mix(mix):
+    """Validate a training-opponent mix and return it as normalised weights.
+
+    None means pure self-play, which is what the pipeline has always done.
+    A dict maps any of TRAIN_OPPONENT_KINDS to a non-negative weight;
+    'self' is the snapshot pool, the other two are the fixed baselines.
+    Normalising here means the recorded config shows the sampling
+    probabilities rather than whatever arbitrary scale they were written on.
+    """
+    if mix is None:
+        return None
+    if not isinstance(mix, dict):
+        raise TypeError(
+            f"train_opponent_mix must be None or a dict over "
+            f"{TRAIN_OPPONENT_KINDS}, got {mix!r}")
+    unknown = sorted(set(mix) - set(TRAIN_OPPONENT_KINDS))
+    if unknown:
+        raise KeyError(
+            f"train_opponent_mix has unknown opponent kinds {unknown} - "
+            f"expected any of {list(TRAIN_OPPONENT_KINDS)}")
+    for kind, weight in mix.items():
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) \
+                or weight < 0 or weight != weight:
+            raise ValueError(
+                f"train_opponent_mix[{kind!r}] must be a number >= 0, "
+                f"got {weight!r}")
+    total = float(sum(mix.values()))
+    if total <= 0:
+        raise ValueError(
+            f"train_opponent_mix weights sum to {total} - at least one "
+            f"opponent kind has to be reachable or no training game has an "
+            f"opponent at all")
+    return {kind: float(mix[kind]) / total
+            for kind in TRAIN_OPPONENT_KINDS if mix.get(kind, 0) > 0}
 
 
 def resolved_config(config):
@@ -161,16 +242,36 @@ def select_x(valid_x_list, epsilon, net):
     """Epsilon-greedy over candidate inputs, scored by `net`. The net is an
     explicit argument, so one function serves the learner and any
     model-backed opponent.
+
+    The candidate set is scored in ONE batched forward pass rather than one
+    pass per candidate. A decision costs ~7 candidate evaluations and every
+    turn of every training and test game makes one, so this is the same
+    arithmetic through a shape torch is actually built for.
+
+    > [GOTCHA] batching is not bit-identical to looping: a batched matmul
+    > accumulates in a different order, so two candidates that used to tie
+    > exactly can now differ in the last ULP and `argmax` can pick the other
+    > one. With the network as it was initialised - Q spread 7e-5 across a
+    > whole candidate set - that was a real risk. With a properly scaled
+    > init it is not, but a comparison across this change is still a
+    > comparison across a behaviour change.
     """
+    if not valid_x_list:
+        raise ValueError(
+            "select_x got an empty candidate list - an empty legal set means "
+            "the game is over and _take_turn is supposed to return before "
+            "reaching a policy")
     if np.random.rand() < epsilon:
         return valid_x_list[np.random.choice(len(valid_x_list))]
 
     with torch.no_grad():
-        q_values = [
-            net(x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)).item()
+        candidates = torch.stack([
+            x if isinstance(x, torch.Tensor)
+            else torch.tensor(x, dtype=torch.float32)
             for x in valid_x_list
-        ]
-    return valid_x_list[int(np.argmax(q_values)) if q_values else 0]
+        ])
+        q_values = net(candidates).reshape(-1)
+    return valid_x_list[int(torch.argmax(q_values))]
 
 
 def random_opponent(valid_x_list):
@@ -207,10 +308,27 @@ def model_opponent(net, epsilon=0.0):
     return lambda valid_x_list: select_x(valid_x_list, epsilon, net)
 
 
-def _resolve_opponent(opponent, epsilon=0.0):
+def net_kwargs(cfg):
+    """The architecture arguments every MLP in a run is built from.
+
+    One place, so the online net, the target net, the self-play opponent
+    and any net loaded from a checkpoint cannot end up with different
+    shapes - a mismatch that surfaces as a load_state_dict error at best
+    and as a silently different opponent at worst.
+    """
+    return dict(hidden_dim=cfg["q_hidden_dim"], features=cfg["q_features"],
+                layer_norm=cfg["q_layer_norm"], init=cfg["q_init"])
+
+
+def _resolve_opponent(opponent, epsilon=0.0, arch=None):
     """Resolve 'random', 'greedy', an nn.Module, a checkpoint path or a
     callable to (policy, label). Building an MLP here reseeds torch
     globally, so callers resolve BEFORE a seeded episode loop.
+
+    `arch` is net_kwargs(cfg); a checkpoint is loaded into a net built to
+    the run's own architecture, so a checkpoint saved under a different one
+    fails loudly at load_state_dict instead of quietly playing as something
+    else.
     """
     if isinstance(opponent, torch.nn.Module):
         return model_opponent(opponent, epsilon), "saved model"
@@ -218,7 +336,7 @@ def _resolve_opponent(opponent, epsilon=0.0):
         named = {"random": random_opponent, "greedy": greedy_opponent}
         if opponent.lower() in named:
             return named[opponent.lower()], opponent.lower()
-        net = MLP()
+        net = MLP(**(arch or {}))
         if not load_checkpoint(net, opponent):
             raise FileNotFoundError(f"no checkpoint at {opponent}")
         return model_opponent(net, epsilon), f"saved model ({opponent})"
@@ -400,9 +518,29 @@ def run_self_play_training(config=None, epsilon=None, episodes=None,
         """
         return select_x(valid_x_list, epsilon, online_net)
 
-    def opponent_policy(valid_x_list):
+    def self_policy(valid_x_list):
         """The training opponent's move, through opponent_net."""
         return select_x(valid_x_list, cfg["train_opponent_epsilon"], opponent_net)
+
+    mix = cfg["train_opponent_mix"]
+    policies_by_kind = {"self": self_policy, "greedy": greedy_opponent,
+                        "random": random_opponent}
+    mix_kinds = list(mix) if mix else []
+    mix_weights = [mix[k] for k in mix_kinds] if mix else []
+
+    def pick_opponent_policy():
+        """This episode's training opponent.
+
+        Pure self-play when `train_opponent_mix` is None, which is what the
+        pipeline has always done. With a mix, the kind is drawn PER EPISODE
+        and not per turn, so a game is played against one opponent from
+        start to finish and the transitions in it describe a coherent
+        adversary rather than a chimera that changes identity mid-game.
+        """
+        if not mix_kinds:
+            return self_policy
+        return policies_by_kind[
+            mix_kinds[int(np.random.choice(len(mix_kinds), p=mix_weights))]]
 
     def update(x, rewards, next_valid_x_list, done, episode):
         """Store the transition and, past warmup, run updates_per_step batched
@@ -418,7 +556,9 @@ def run_self_play_training(config=None, epsilon=None, episodes=None,
             q_pred, loss = learn.train_step_batch(
                 online_net, target_net, batch, cfg["gamma"], cfg["lr"], cfg["tau"],
                 updates_per_step=cfg["updates_per_step"],
-                n_step=cfg["n_step"], learning_method=cfg["learning_method"])
+                n_step=cfg["n_step"], learning_method=cfg["learning_method"],
+                huber_delta=cfg["huber_delta"], grad_clip=cfg["grad_clip"],
+                target_clip=cfg["target_clip"])
             ev.check_loss_and_q(loss, q_pred, episode)
             step_losses.append(loss)
         return float(np.mean(step_losses))
@@ -428,7 +568,7 @@ def run_self_play_training(config=None, epsilon=None, episodes=None,
         main_player = itr % PLAYERS_PER_GAME
 
         losses, _turns = _play_episode(
-            ge, itr, main_player, main_policy, opponent_policy, 1, update,
+            ge, itr, main_player, main_policy, pick_opponent_policy(), 1, update,
             n_step=cfg["n_step"], gamma=cfg["gamma"],
             shaping=cfg["reward_shaping"])
 
@@ -472,6 +612,8 @@ def _test_block(net, cfg, opponent_policy, label, episodes, seeds,
             n_step=cfg["n_step"],
             learning_method=cfg["learning_method"],
             skeep_progress=True,
+            huber_delta=cfg["huber_delta"], grad_clip=cfg["grad_clip"],
+            target_clip=cfg["target_clip"],
         )
         ev.check_loss_and_q(loss, q_pred, episode_index)
         return loss
@@ -512,9 +654,11 @@ def run_test_simulation(net, config=None, opponents=None, episodes=None,
     opponents = _as_list(cfg["test_opponents"] if opponents is None else opponents)
 
     net.eval()
-    resolved = [_resolve_opponent(o) for o in opponents]
+    arch = net_kwargs(cfg)
+    resolved = [_resolve_opponent(o, arch=arch) for o in opponents]
     if target_net is None:
-        target_net = MLP()
+        target_net = MLP(seed=cfg["seed"] if cfg["seed"] is not None else 42,
+                         **arch)
         target_net.load_state_dict(net.state_dict())
     target_net.eval()
 
@@ -533,12 +677,18 @@ def run_test_simulation(net, config=None, opponents=None, episodes=None,
     return records
 
 
-def _build_nets(seed):
+def _build_nets(cfg):
     """online/opponent/target nets, the latter two synced to online's initial
     weights. MLP's seed is passed EXPLICITLY: its default would make every
     init in a sweep identical and collapse the variance being measured.
+
+    All three are built from net_kwargs(cfg), so the architecture a sweep
+    varies reaches every net a run holds.
     """
-    nets = [MLP() if seed is None else MLP(seed=seed) for _ in range(3)]
+    seed = cfg["seed"]
+    arch = net_kwargs(cfg)
+    nets = [MLP(**arch) if seed is None else MLP(seed=seed, **arch)
+            for _ in range(3)]
     online, opponent, target = nets
     for net in (opponent, target):
         net.load_state_dict(online.state_dict())
@@ -561,7 +711,7 @@ def simulation(config):
 
     if cfg["seed"] is not None:
         _seed_all(cfg["seed"])
-    online_net, opponent_net, target_net = _build_nets(cfg["seed"])
+    online_net, opponent_net, target_net = _build_nets(cfg)
 
     run_log = ev.RunLog()
     epsilon = cfg["epsilon"]

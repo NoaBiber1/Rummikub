@@ -2,9 +2,36 @@
 
     DQN   target = r + gamma * max_a Q_target(s', a)
     DDQN  target = r + gamma * Q_target(s', argmax_a Q_online(s', a))
+
+THREE BRAKES ON DIVERGENCE live here, all off by default so a standalone
+caller gets the old arithmetic, and all switched on from the config:
+
+`huber_delta`   The regression loss was a plain squared error, whose
+                GRADIENT grows linearly with the TD error. Once values
+                start inflating, the correction applied grows with the
+                inflation, which is a positive feedback loop rather than a
+                brake. Huber is quadratic near zero and linear beyond
+                `delta`, so the per-sample gradient is bounded and a
+                handful of wild targets can no longer dominate a batch.
+                `None` keeps the squared error.
+
+`grad_clip`     Global gradient-norm clipping, the second bound on how far
+                one batch can move the weights.
+
+`target_clip`   The discounted return of this game is bounded: the payoff
+                is zero-sum over a deck worth 788 points on a 1/100 scale,
+                so |return| <= 7.88 (plus the potential term when shaping
+                is on). A target outside that range is not a value, it is
+                the divergence being fed back in, and clamping refuses to
+                learn from it. The bound is passed IN rather than imported
+                so this module keeps depending on torch and nothing else.
+
+None of the three changes what the fixed point IS; they bound how fast the
+iterate can leave it.
 """
 
 import torch
+import torch.nn.functional as F
 
 DQN = 0
 DDQN = 1
@@ -55,6 +82,58 @@ def _reward_sequence(reward, n_step):
 def _as_tensor(x):
     """x as a float32 tensor."""
     return x if isinstance(x, torch.Tensor) else torch.tensor(x, dtype=torch.float32)
+
+
+def _validate_positive(value, name):
+    """`value` as a float if it is a positive finite number, else raise.
+
+    None is the OFF switch for all three brakes and is returned unchanged,
+    so a caller can pass a config value straight through.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number or None, got {value!r}")
+    value = float(value)
+    if not value > 0 or value != value or value == float("inf"):
+        raise ValueError(f"{name} must be a finite number > 0 or None, "
+                         f"got {value!r}")
+    return value
+
+
+def td_loss(q_pred, target, huber_delta=None):
+    """Mean regression loss between a prediction and its target.
+
+    Squared error when `huber_delta` is None, Huber otherwise. Huber is
+    written through `smooth_l1_loss(beta=delta)` and multiplied back by
+    delta, so it agrees with the squared error to within a factor of two
+    in the small-error regime instead of being silently rescaled by 1/delta
+    - which would have made `lr` mean something different the moment the
+    loss was switched.
+    """
+    huber_delta = _validate_positive(huber_delta, "huber_delta")
+    if huber_delta is None:
+        return ((q_pred - target) ** 2).mean()
+    return 2.0 * huber_delta * F.smooth_l1_loss(
+        q_pred, target, beta=huber_delta, reduction="mean")
+
+
+def clamp_target(target, target_clip):
+    """`target` clamped to +/-`target_clip`, or unchanged when it is None."""
+    target_clip = _validate_positive(target_clip, "target_clip")
+    if target_clip is None:
+        return target
+    return target.clamp(-target_clip, target_clip)
+
+
+def _step_optimizer(online_net, loss, grad_clip):
+    """Backward, optional gradient-norm clip, and one optimizer step."""
+    grad_clip = _validate_positive(grad_clip, "grad_clip")
+    online_net.optimizer.zero_grad()
+    loss.backward()
+    if grad_clip is not None:
+        torch.nn.utils.clip_grad_norm_(online_net.parameters(), grad_clip)
+    online_net.optimizer.step()
 
 
 def target_drift(tau, updates_per_step=1):
@@ -112,7 +191,8 @@ def _bootstrap(online_net, target_net, next_pos_x, method):
 
 def train_step(online_net, target_net, x, reward, next_pos_x=None, done=False,
                gamma=0.99, lr=0.001, tau=0.005, updates_per_step=1, n_step=1,
-               learning_method=DQN, skeep_progress=False):
+               learning_method=DQN, skeep_progress=False, huber_delta=None,
+               grad_clip=None, target_clip=None):
     """One single-transition n-step update; returns (q_pred, loss).
 
     `reward` is the sequence of k <= n_step rewards observed after the
@@ -120,6 +200,9 @@ def train_step(online_net, target_net, x, reward, next_pos_x=None, done=False,
     target = sum_j<k gamma**j * r_j (+ gamma**k * bootstrap, if not done).
     skeep_progress (sic) still computes q_pred/loss but skips backward,
     step and the soft update - the no-training pass the test loop uses.
+
+    `huber_delta`, `grad_clip` and `target_clip` all default to None, which
+    reproduces this function's previous arithmetic exactly.
     """
     method = resolve_learning_method(learning_method)
 
@@ -135,33 +218,35 @@ def train_step(online_net, target_net, x, reward, next_pos_x=None, done=False,
     if not done:
         target_value += gamma ** k * _bootstrap(
             online_net, target_net, next_pos_x or [], method)
-    target = torch.tensor([[target_value]], dtype=torch.float32)
+    target = clamp_target(
+        torch.tensor([[target_value]], dtype=torch.float32), target_clip)
 
     if skeep_progress:
         with torch.no_grad():
             q_pred = online_net.forward(x)
-            loss = (q_pred - target) ** 2
+            loss = td_loss(q_pred, target, huber_delta)
         return q_pred.item(), loss.item()
 
-    online_net.optimizer.zero_grad()
     q_pred = online_net.forward(x)
-
-    loss = (q_pred - target) ** 2
-    loss.backward()
-    online_net.optimizer.step()
+    loss = td_loss(q_pred, target, huber_delta)
+    _step_optimizer(online_net, loss, grad_clip)
     soft_update_target(online_net, target_net, tau, updates_per_step)
 
     return q_pred.item(), loss.item()
 
 
 def train_step_batch(online_net, target_net, batch, gamma=0.99, lr=0.001,
-                     tau=0.005, updates_per_step=1, n_step=1, learning_method=DQN):
+                     tau=0.005, updates_per_step=1, n_step=1, learning_method=DQN,
+                     huber_delta=None, grad_clip=None, target_clip=None):
     """One batched n-step update; returns (mean q_pred, loss).
 
     `batch` is ReplayBuffer.sample()'s output: a list of
     (x, rewards, next_pos_x at t+k, done). Samples may carry different
     numbers of rewards, so returns are computed on a zero-padded matrix and
     each sample's own k drives its bootstrap exponent.
+
+    `huber_delta`, `grad_clip` and `target_clip` all default to None, which
+    reproduces this function's previous arithmetic exactly.
     """
     method = resolve_learning_method(learning_method)
 
@@ -201,18 +286,15 @@ def train_step_batch(online_net, target_net, batch, gamma=0.99, lr=0.001,
             max_q_next = torch.zeros(len(batch), dtype=torch.float32)
 
     done_t = torch.tensor(dones, dtype=torch.bool)
-    target = torch.where(
+    target = clamp_target(torch.where(
         done_t,
         n_step_returns,
         n_step_returns + bootstrap_discount * max_q_next,
-    ).unsqueeze(1)
+    ).unsqueeze(1), target_clip)
 
-    online_net.optimizer.zero_grad()
     q_pred = online_net.forward(x_batch)
-
-    loss = ((q_pred - target) ** 2).mean()
-    loss.backward()
-    online_net.optimizer.step()
+    loss = td_loss(q_pred, target, huber_delta)
+    _step_optimizer(online_net, loss, grad_clip)
     soft_update_target(online_net, target_net, tau, updates_per_step)
 
     return q_pred.mean().item(), loss.item()

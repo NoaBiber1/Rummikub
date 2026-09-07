@@ -29,15 +29,45 @@ import plots
 import simulation as sim
 from simulation import simulation
 
+# The eight-seed run that diverged used learning_method="DQN", n_step=1,
+# reward_shaping=False, gamma=0.99 and no brakes at all. Every line below
+# that carries a "was" is a diagnosed cause, not a tuning preference; the
+# reasoning is in DIVERGENCE.md and each one is a live config key, so an
+# ablation is a one-line edit rather than a fork.
 BASE_CONFIG = dict(
     training_iterations=20,
     train_episodes_per_block=200,
     test_episodes_per_block=100,
     budget=dict(max_actions=12, alt_counts=2, alts_per_count=2),
-    learning_method="DQN",
-    n_step=1,
-    reward_shaping=False,
-    gamma=0.99,
+
+    # was "DQN". A smaller lever than it first looked: measured on 1,022 real
+    # legal sets with a properly lagged target, DDQN removes 11% of the
+    # maximiser's premium. The premium DOES grow with |A| (0.00126 at |A|=2
+    # to 0.00434 at |A|=7) but it ANTI-correlates with hand size (-0.361), so
+    # the "max-bias drives hoarding" story is refuted - see DIVERGENCE.md §4.
+    # Kept because it costs one forward pass and 11% is not nothing, NOT
+    # because it is expected to fix the collapse.
+    learning_method="DDQN",
+
+    # was 1. get_reward is 0 on every turn but the last of a ~45-turn game,
+    # so at n_step=1 almost every target is bootstrap-on-bootstrap.
+    n_step=3,
+
+    # was False. PHI = (opponent hand score - own hand score)/100 is already
+    # implemented, already verified to telescope, and is 0 at terminals, so
+    # it is policy-invariant (Ng et al. 1999) - it cannot change which
+    # policy is optimal, only how fast the approximator finds it. It also
+    # prices a draw honestly turn by turn: taking a tile raises your own
+    # hand score, so PHI falls.
+    reward_shaping=True,
+
+    # was 0.99. UNVALIDATED - a hypothesis, not a measurement. 1/(1-gamma)
+    # = 100 against a ~45-turn episode, so any per-backup bias is amplified
+    # 100x before the horizon is even reached; 0.97 still covers the episode
+    # (horizon ~33) at a third the amplification and discounts a distant
+    # win, which is the right preference in a game you want to end quickly.
+    # Sweep it last, after the changes that ARE measured.
+    gamma=0.97,
     lr=3e-4,
     tau=0.001,
     updates_per_step=2,
@@ -45,6 +75,31 @@ BASE_CONFIG = dict(
     epsilon_decay=0.99626,
     epsilon_min=0.05,
     buffer_size=100000,
+
+    # The three brakes, all previously absent. A SAFETY NET, not a cure:
+    # measured, they are INERT in the normal regime (TD errors ~1e-5, so
+    # Huber == MSE, no gradient reaches 10, no target approaches the bound)
+    # and an offline arm carrying them came out bit-identical to legacy.
+    # They engage once divergence is already large, which turns a run that
+    # would silently burn sixty hours into one that stays bounded.
+    # target_clip="auto" resolves at config time to the largest return the
+    # game can physically produce (MAX_POSSIBLE_REWARD, doubled when shaping
+    # adds a potential term), so full_config records the number applied.
+    huber_delta=1.0,
+    grad_clip=10.0,
+    target_clip="auto",
+
+    # Architecture. THE ONE CHANGE WITH A DIRECTLY MEASURED BEFORE/AFTER:
+    # the old N(0, 0.01) draw made the net a constant function (output std
+    # 8.5e-5, Q spread 7.3e-5 across twelve candidates in one state, 52% of
+    # fc1 dead), so the greedy policy ranked actions by numerical noise.
+    # Each is separately ablatable: q_init="legacy" restores the old draw,
+    # q_features=False the raw [board|hand|action] input, q_layer_norm=False
+    # the unnormalised trunk. Ablate q_init FIRST - see DIVERGENCE.md §10.
+    q_features=True,
+    q_layer_norm=True,
+    q_init="kaiming",
+
     test_opponents=["random", "greedy"],
 )
 
