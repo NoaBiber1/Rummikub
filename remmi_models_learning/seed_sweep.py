@@ -12,11 +12,17 @@ Every cell is scored against every opponent separately - never pooled.
 Per sweep, in checkpoints/sweep/<config>/: seed<N>.json (that cell's
 block log), aggregate.json (mean + variance across seeds per block) and
 plots/*.png. Nothing is printed or plotted while a cell runs.
+
+Every finished cell is also published to checkpoints/cells/, keyed by a
+fingerprint of the config it ran under, its seed and the code that ran
+it (see cell_cache), so two cells that are the same work under two names
+are computed once and a stale result is never mistaken for a current one.
 """
 import math
 import os
 
 import aggregate as agg
+import cell_cache as cc
 import evaluation as ev
 import parallel_sweep as ps
 import plots
@@ -69,6 +75,13 @@ def build_config(config, seed, overrides=None):
             "overrides sets 'name' - the config name selects the output "
             "directory and is read off the per-config dict, so setting it here "
             "would relabel results without moving them")
+    if "checkpoint_path" in overrides:
+        raise KeyError(
+            "overrides sets 'checkpoint_path' - overrides apply to EVERY cell, "
+            "so every one of them would save its weights to the same file "
+            "while the others were doing the same, and what survived would "
+            "belong to no cell in particular. Put it on a single config that "
+            "runs one seed when a run really has to leave a checkpoint")
 
     merged = {**BASE_CONFIG, **config, **overrides}
     return {
@@ -78,28 +91,52 @@ def build_config(config, seed, overrides=None):
     }
 
 
-def _run_one(config, seed, overrides=None):
-    """Run one (config, seed) cell and return the dict for its per-seed JSON:
-    the run log, plus metadata, hyperparams and the derived final-block
-    'eval'. Block series are copied through unchanged and unsummarised.
+def _plan_cells(configs, seeds, overrides):
+    """Every (config, seed) cell of a sweep, resolved and fingerprinted.
+
+    Resolving in the parent rather than in the worker does two things. It
+    validates every config through `_cfg` before a single subprocess has
+    been paid for, so a typo fails in the first second of a sweep instead
+    of the first second of a cell. And it produces the fingerprint the
+    cache is keyed on, which has to be known BEFORE a cell is launched
+    for the cache to save anything at all.
     """
-    full_config = build_config(config, seed, overrides)
-    result = simulation(full_config)
+    cells = []
+    for config in configs:
+        for seed in seeds:
+            full_config = sim.resolved_config(
+                build_config(config, seed, overrides))
+            cells.append(cc.Cell(config=config, seed=seed,
+                                 full_config=full_config,
+                                 fingerprint=cc.fingerprint(full_config, seed)))
+    return cells
+
+
+def _run_one(config, seed, overrides=None):
+    """Run one (config, seed) cell and return the dict for its per-seed JSON.
+
+    The run log, the config the run ACTUALLY used, that config's cache
+    fingerprint and code version, and the derived final-block 'eval'.
+    Block series are copied through unchanged and unsummarised.
+
+    'full_config' is simulation's own resolved config, so every key that
+    shapes a run reaches the disk - including the ones no sweep varies
+    (`min_buffer_size`, `batch_size`, the opponent pool), which used to be
+    absent and left a saved cell impossible to tell apart from one run
+    under different values. It is also what the fingerprint is taken
+    over, which is what makes the cache safe to trust.
+    """
+    result = simulation(build_config(config, seed, overrides))
+    full_config = result["config"]
     run_log = {key: result[key] for key in ("schema", "train", "test")}
 
     return {
         **run_log,
         "config": config["name"],
         "seed": seed,
-        "eval_seed_base": full_config["eval_seed_base"],
-        "training_iterations": full_config["training_iterations"],
-        "train_episodes_per_block": full_config["train_episodes_per_block"],
-        "test_episodes_per_block": full_config["test_episodes_per_block"],
-        "hyperparams": {k: full_config[k] for k in
-                        ("learning_method", "n_step", "reward_shaping",
-                         "gamma", "lr", "tau", "updates_per_step",
-                         "epsilon", "epsilon_decay", "epsilon_min",
-                         "budget", "buffer_size")},
+        cc.FULL_CONFIG_KEY: full_config,
+        cc.FINGERPRINT_KEY: cc.fingerprint(full_config, seed),
+        cc.CODE_VERSION_KEY: cc.CODE_VERSION,
         "eval": ev.final_test_metrics(run_log),
     }
 
@@ -126,19 +163,24 @@ def run_sweep(configs=CONFIGS, seeds=TRAINING_SEEDS, overrides=None,
     """Run every (config, seed) cell, aggregate, plot and summarise.
 
     `workers` cells run at once, each in its own subprocess. `resume` skips
-    cells whose result JSON already exists. A failed cell is reported and
-    skipped, never scored as a zero. Aggregation and figures run at the end,
-    over the finished block logs. Returns (results, summary, aggregates).
+    cells whose result JSON already exists AND still matches the fingerprint
+    of the config and code in front of it; a result left by an older tree is
+    re-run rather than served. A cell that another sweep already ran under a
+    different name is copied from the cache instead of being computed again.
+    A failed cell is reported and skipped, never scored as a zero.
+    Aggregation and figures run at the end, over the finished block logs.
+    Returns (results, summary, aggregates).
     """
     if out_dir is None:
         out_dir = os.path.join(sim.CHECKPOINT_DIR, "sweep")
     overrides = dict(overrides or {})
     workers = ps.resolve_workers(workers)
 
-    cells = [(config, seed) for config in configs for seed in seeds]
     for config in configs:
         print(f"[sweep] config={config['name']} "
               f"({ {k: v for k, v in config.items() if k != 'name'} })")
+    cells = _plan_cells(configs, seeds, overrides)
+    print(f"[sweep] code version {cc.CODE_VERSION}, cache {cc.cache_dir()}")
 
     all_results, failures = ps.run_cells(cells, out_dir, overrides, workers,
                                          resume=resume)

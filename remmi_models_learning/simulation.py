@@ -123,6 +123,17 @@ def _cfg(config):
     return cfg
 
 
+def resolved_config(config):
+    """The full config a run will use: DEFAULTS under `config`, validated.
+
+    The same dict `simulation()` returns as result['config'], exposed so a
+    caller can resolve and validate a cell WITHOUT running it - which is
+    what lets seed_sweep fingerprint a cell for the cache before deciding
+    whether it has to be launched at all.
+    """
+    return _cfg(config)
+
+
 def _as_list(value):
     """One opponent or many. A bare string is a single opponent, not an
     iterable of characters.
