@@ -1,0 +1,831 @@
+{
+  "schema": "block-log/1",
+  "train": {
+    "blocks": [
+      {
+        "block": 1,
+        "episode": 200,
+        "metrics": {
+          "avg_loss": 0.0004018752408975659
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 7495
+        }
+      },
+      {
+        "block": 2,
+        "episode": 400,
+        "metrics": {
+          "avg_loss": 0.0005796765360397531
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 7408
+        }
+      },
+      {
+        "block": 3,
+        "episode": 600,
+        "metrics": {
+          "avg_loss": 0.000822632147069525
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 7880
+        }
+      },
+      {
+        "block": 4,
+        "episode": 800,
+        "metrics": {
+          "avg_loss": 0.0010022791131283756
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 8932
+        }
+      },
+      {
+        "block": 5,
+        "episode": 1000,
+        "metrics": {
+          "avg_loss": 0.0014428740676092687
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9314
+        }
+      },
+      {
+        "block": 6,
+        "episode": 1200,
+        "metrics": {
+          "avg_loss": 0.0018070181467365323
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9845
+        }
+      },
+      {
+        "block": 7,
+        "episode": 1400,
+        "metrics": {
+          "avg_loss": 0.0025981071785451
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9982
+        }
+      },
+      {
+        "block": 8,
+        "episode": 1600,
+        "metrics": {
+          "avg_loss": 0.004004633473639427
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9667
+        }
+      },
+      {
+        "block": 9,
+        "episode": 1800,
+        "metrics": {
+          "avg_loss": 0.0062398457029224095
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9733
+        }
+      },
+      {
+        "block": 10,
+        "episode": 2000,
+        "metrics": {
+          "avg_loss": 0.009648811190942843
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9780
+        }
+      },
+      {
+        "block": 11,
+        "episode": 2200,
+        "metrics": {
+          "avg_loss": 0.01576704836331232
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9736
+        }
+      },
+      {
+        "block": 12,
+        "episode": 2400,
+        "metrics": {
+          "avg_loss": 0.023810263145351056
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9980
+        }
+      },
+      {
+        "block": 13,
+        "episode": 2600,
+        "metrics": {
+          "avg_loss": 0.031953917577276864
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9843
+        }
+      },
+      {
+        "block": 14,
+        "episode": 2800,
+        "metrics": {
+          "avg_loss": 0.04432320714757604
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9897
+        }
+      },
+      {
+        "block": 15,
+        "episode": 3000,
+        "metrics": {
+          "avg_loss": 0.05945232311756281
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9680
+        }
+      },
+      {
+        "block": 16,
+        "episode": 3200,
+        "metrics": {
+          "avg_loss": 0.07102504060312699
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9954
+        }
+      },
+      {
+        "block": 17,
+        "episode": 3400,
+        "metrics": {
+          "avg_loss": 0.08480680943149116
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9530
+        }
+      },
+      {
+        "block": 18,
+        "episode": 3600,
+        "metrics": {
+          "avg_loss": 0.10005860970505882
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9802
+        }
+      },
+      {
+        "block": 19,
+        "episode": 3800,
+        "metrics": {
+          "avg_loss": 0.12058885416938601
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9630
+        }
+      },
+      {
+        "block": 20,
+        "episode": 4000,
+        "metrics": {
+          "avg_loss": 0.1481775457147714
+        },
+        "counts": {
+          "episodes": 200,
+          "updates": 9895
+        }
+      }
+    ]
+  },
+  "test": {
+    "opponents": {
+      "random": [
+        {
+          "block": 1,
+          "episode": 200,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.017500000707805156,
+            "win_rate": 42.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 2,
+          "episode": 400,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.19999999972060323,
+            "win_rate": 24.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 3,
+          "episode": 600,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.19989999987185,
+            "win_rate": 17.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 4,
+          "episode": 800,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.24100000018253923,
+            "win_rate": 16.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 5,
+          "episode": 1000,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.22309999749064446,
+            "win_rate": 13.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 6,
+          "episode": 1200,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.2943999988771975,
+            "win_rate": 11.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 7,
+          "episode": 1400,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.27370000099763275,
+            "win_rate": 11.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 8,
+          "episode": 1600,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.3127999992109835,
+            "win_rate": 12.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 9,
+          "episode": 1800,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.36189999993890526,
+            "win_rate": 10.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 10,
+          "episode": 2000,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.2700999997369945,
+            "win_rate": 15.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 11,
+          "episode": 2200,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.29629999928176404,
+            "win_rate": 11.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 12,
+          "episode": 2400,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.27799999931827185,
+            "win_rate": 8.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 13,
+          "episode": 2600,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.3426999997720122,
+            "win_rate": 7.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 14,
+          "episode": 2800,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.26519999966025354,
+            "win_rate": 7.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 15,
+          "episode": 3000,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.3209999997913837,
+            "win_rate": 9.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 16,
+          "episode": 3200,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.28079999938607214,
+            "win_rate": 11.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 17,
+          "episode": 3400,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.2792999993637204,
+            "win_rate": 13.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 18,
+          "episode": 3600,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.3055999990366399,
+            "win_rate": 6.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 19,
+          "episode": 3800,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.2889999995566905,
+            "win_rate": 10.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 20,
+          "episode": 4000,
+          "opponent": "random",
+          "metrics": {
+            "avg_reward": -0.2920999994315207,
+            "win_rate": 11.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        }
+      ],
+      "greedy": [
+        {
+          "block": 1,
+          "episode": 200,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.10610000062733889,
+            "win_rate": 24.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 2,
+          "episode": 400,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.21110000083222985,
+            "win_rate": 15.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 3,
+          "episode": 600,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.23279999990016223,
+            "win_rate": 9.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 4,
+          "episode": 800,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3090000002644956,
+            "win_rate": 4.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 5,
+          "episode": 1000,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.29540000012144446,
+            "win_rate": 5.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 6,
+          "episode": 1200,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3048000005632639,
+            "win_rate": 8.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 7,
+          "episode": 1400,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.374100001193583,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 8,
+          "episode": 1600,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.37249999767169356,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 9,
+          "episode": 1800,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.34639999955892564,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 10,
+          "episode": 2000,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.33049999954178927,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 11,
+          "episode": 2200,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3239999987371266,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 12,
+          "episode": 2400,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3213000021502376,
+            "win_rate": 8.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 13,
+          "episode": 2600,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.2724999991245568,
+            "win_rate": 4.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 14,
+          "episode": 2800,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.2877000007033348,
+            "win_rate": 3.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 15,
+          "episode": 3000,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.31410000078380107,
+            "win_rate": 3.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 16,
+          "episode": 3200,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3453999974578619,
+            "win_rate": 1.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 17,
+          "episode": 3400,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.27870000107213855,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 18,
+          "episode": 3600,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.3140000010468066,
+            "win_rate": 2.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 19,
+          "episode": 3800,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.382999997343868,
+            "win_rate": 3.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        },
+        {
+          "block": 20,
+          "episode": 4000,
+          "opponent": "greedy",
+          "metrics": {
+            "avg_reward": -0.2899000002257526,
+            "win_rate": 6.0
+          },
+          "counts": {
+            "games": 100,
+            "terminal_games": 100,
+            "decided_games": 100
+          }
+        }
+      ]
+    }
+  },
+  "config": "baseline",
+  "seed": 3,
+  "eval_seed_base": 10000,
+  "training_iterations": 20,
+  "train_episodes_per_block": 200,
+  "test_episodes_per_block": 100,
+  "hyperparams": {
+    "learning_method": "DQN",
+    "n_step": 1,
+    "reward_shaping": false,
+    "gamma": 0.99,
+    "lr": 0.0003,
+    "tau": 0.001,
+    "updates_per_step": 2,
+    "epsilon": 1.0,
+    "epsilon_decay": 0.99626,
+    "epsilon_min": 0.05,
+    "budget": {
+      "max_actions": 12,
+      "alt_counts": 2,
+      "alts_per_count": 2
+    },
+    "buffer_size": 100000
+  },
+  "eval": {
+    "random": {
+      "avg_reward": -0.2920999994315207,
+      "win_rate": 11.0,
+      "games": 100
+    },
+    "greedy": {
+      "avg_reward": -0.2899000002257526,
+      "win_rate": 6.0,
+      "games": 100
+    }
+  }
+}
