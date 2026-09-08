@@ -35,7 +35,7 @@ from simulation import simulation
 # reasoning is in DIVERGENCE.md and each one is a live config key, so an
 # ablation is a one-line edit rather than a fork.
 BASE_CONFIG = dict(
-    training_iterations=20,
+    training_iterations=10,
     train_episodes_per_block=200,
     test_episodes_per_block=100,
     budget=dict(max_actions=12, alt_counts=2, alts_per_count=2),

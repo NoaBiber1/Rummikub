@@ -219,7 +219,7 @@ def train_step(online_net, target_net, x, reward, next_pos_x=None, done=False,
         target_value += gamma ** k * _bootstrap(
             online_net, target_net, next_pos_x or [], method)
     target = clamp_target(
-        torch.tensor([[target_value]], dtype=torch.float32), target_clip)
+        torch.tensor([target_value], dtype=torch.float32), target_clip)
 
     if skeep_progress:
         with torch.no_grad():
