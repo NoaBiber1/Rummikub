@@ -6,110 +6,110 @@
         "block": 1,
         "episode": 200,
         "metrics": {
-          "avg_loss": 0.0030208358369059212
+          "avg_loss": 0.0029427912751309473
         },
         "counts": {
           "episodes": 200,
-          "updates": 7130
+          "updates": 7550
         }
       },
       {
         "block": 2,
         "episode": 400,
         "metrics": {
-          "avg_loss": 0.0014883377502029943
+          "avg_loss": 0.0013200427309589286
         },
         "counts": {
           "episodes": 200,
-          "updates": 7268
+          "updates": 7386
         }
       },
       {
         "block": 3,
         "episode": 600,
         "metrics": {
-          "avg_loss": 0.0016586971807776643
+          "avg_loss": 0.0006524054202174167
         },
         "counts": {
           "episodes": 200,
-          "updates": 7338
+          "updates": 7443
         }
       },
       {
         "block": 4,
         "episode": 800,
         "metrics": {
-          "avg_loss": 0.0019106032769208247
+          "avg_loss": 0.0005150056625500988
         },
         "counts": {
           "episodes": 200,
-          "updates": 7444
+          "updates": 7557
         }
       },
       {
         "block": 5,
         "episode": 1000,
         "metrics": {
-          "avg_loss": 0.002144249324456189
+          "avg_loss": 0.0004785964306711899
         },
         "counts": {
           "episodes": 200,
-          "updates": 7322
+          "updates": 7629
         }
       },
       {
         "block": 6,
         "episode": 1200,
         "metrics": {
-          "avg_loss": 0.0023053524765225663
+          "avg_loss": 0.0004215060582984544
         },
         "counts": {
           "episodes": 200,
-          "updates": 7352
+          "updates": 7331
         }
       },
       {
         "block": 7,
         "episode": 1400,
         "metrics": {
-          "avg_loss": 0.0025211663436891913
+          "avg_loss": 0.00038580844720262835
         },
         "counts": {
           "episodes": 200,
-          "updates": 7238
+          "updates": 7438
         }
       },
       {
         "block": 8,
         "episode": 1600,
         "metrics": {
-          "avg_loss": 0.0027464625276753083
+          "avg_loss": 0.0003865813599743738
         },
         "counts": {
           "episodes": 200,
-          "updates": 7171
+          "updates": 7501
         }
       },
       {
         "block": 9,
         "episode": 1800,
         "metrics": {
-          "avg_loss": 0.0029530973733796336
+          "avg_loss": 0.00038605709146551987
         },
         "counts": {
           "episodes": 200,
-          "updates": 7258
+          "updates": 7521
         }
       },
       {
         "block": 10,
         "episode": 2000,
         "metrics": {
-          "avg_loss": 0.0032552571480570698
+          "avg_loss": 0.00037715296750545185
         },
         "counts": {
           "episodes": 200,
-          "updates": 7341
+          "updates": 7228
         }
       }
     ]
@@ -122,8 +122,8 @@
           "episode": 200,
           "opponent": "random",
           "metrics": {
-            "avg_reward": 0.013699999433010817,
-            "win_rate": 57.0
+            "avg_reward": -0.01449999913573265,
+            "win_rate": 47.0
           },
           "counts": {
             "games": 100,
@@ -136,8 +136,8 @@
           "episode": 400,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.02450000060722232,
-            "win_rate": 41.0
+            "avg_reward": 0.02020000010728836,
+            "win_rate": 53.0
           },
           "counts": {
             "games": 100,
@@ -150,8 +150,8 @@
           "episode": 600,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.07259999927133322,
-            "win_rate": 30.0
+            "avg_reward": 0.013100000470876694,
+            "win_rate": 53.0
           },
           "counts": {
             "games": 100,
@@ -164,8 +164,8 @@
           "episode": 800,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.021500000040978195,
-            "win_rate": 45.0
+            "avg_reward": 0.010200000293552875,
+            "win_rate": 48.0
           },
           "counts": {
             "games": 100,
@@ -178,8 +178,8 @@
           "episode": 1000,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.0138000001385808,
-            "win_rate": 46.0
+            "avg_reward": -0.032599999140948056,
+            "win_rate": 41.0
           },
           "counts": {
             "games": 100,
@@ -192,8 +192,8 @@
           "episode": 1200,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.048599999006837605,
-            "win_rate": 37.0
+            "avg_reward": 0.005800000224262476,
+            "win_rate": 47.0
           },
           "counts": {
             "games": 100,
@@ -206,8 +206,8 @@
           "episode": 1400,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.007799999490380287,
-            "win_rate": 49.0
+            "avg_reward": 0.002999999802559614,
+            "win_rate": 50.0
           },
           "counts": {
             "games": 100,
@@ -220,8 +220,8 @@
           "episode": 1600,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.02170000085607171,
-            "win_rate": 50.0
+            "avg_reward": 0.012000000327825546,
+            "win_rate": 47.0
           },
           "counts": {
             "games": 100,
@@ -234,8 +234,8 @@
           "episode": 1800,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.054699999410659075,
-            "win_rate": 35.0
+            "avg_reward": -0.006099999416619539,
+            "win_rate": 48.0
           },
           "counts": {
             "games": 100,
@@ -248,8 +248,8 @@
           "episode": 2000,
           "opponent": "random",
           "metrics": {
-            "avg_reward": -0.023199999071657658,
-            "win_rate": 45.0
+            "avg_reward": -0.01270000010728836,
+            "win_rate": 48.0
           },
           "counts": {
             "games": 100,
@@ -264,8 +264,8 @@
           "episode": 200,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.07479999959468842,
-            "win_rate": 28.0
+            "avg_reward": -0.09279999924823641,
+            "win_rate": 30.0
           },
           "counts": {
             "games": 100,
@@ -278,8 +278,8 @@
           "episode": 400,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.05000000001862645,
-            "win_rate": 32.0
+            "avg_reward": -0.08520000038668513,
+            "win_rate": 29.0
           },
           "counts": {
             "games": 100,
@@ -292,8 +292,8 @@
           "episode": 600,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.08860000027343631,
-            "win_rate": 25.0
+            "avg_reward": -0.08869999932125211,
+            "win_rate": 28.0
           },
           "counts": {
             "games": 100,
@@ -306,7 +306,7 @@
           "episode": 800,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.07729999920353293,
+            "avg_reward": -0.07650000067427755,
             "win_rate": 30.0
           },
           "counts": {
@@ -320,8 +320,8 @@
           "episode": 1000,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.142999999653548,
-            "win_rate": 23.0
+            "avg_reward": -0.03940000029280782,
+            "win_rate": 31.0
           },
           "counts": {
             "games": 100,
@@ -334,8 +334,8 @@
           "episode": 1200,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.09349999994039536,
-            "win_rate": 28.0
+            "avg_reward": -0.07150000082328915,
+            "win_rate": 29.0
           },
           "counts": {
             "games": 100,
@@ -348,8 +348,8 @@
           "episode": 1400,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.08659999836236239,
-            "win_rate": 29.0
+            "avg_reward": -0.04909999955445528,
+            "win_rate": 30.0
           },
           "counts": {
             "games": 100,
@@ -362,8 +362,8 @@
           "episode": 1600,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.10479999992996454,
-            "win_rate": 21.0
+            "avg_reward": -0.05979999979957938,
+            "win_rate": 34.0
           },
           "counts": {
             "games": 100,
@@ -376,8 +376,8 @@
           "episode": 1800,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.09269999910145998,
-            "win_rate": 24.0
+            "avg_reward": -0.042099999357014896,
+            "win_rate": 29.0
           },
           "counts": {
             "games": 100,
@@ -390,8 +390,8 @@
           "episode": 2000,
           "opponent": "greedy",
           "metrics": {
-            "avg_reward": -0.12160000100731849,
-            "win_rate": 26.0
+            "avg_reward": -0.11459999974817038,
+            "win_rate": 22.0
           },
           "counts": {
             "games": 100,
@@ -403,7 +403,7 @@
     }
   },
   "config": "stability_test",
-  "seed": 5,
+  "seed": 0,
   "full_config": {
     "training_iterations": 10,
     "train_episodes_per_block": 200,
@@ -419,11 +419,11 @@
     "gamma": 0.97,
     "lr": 0.0003,
     "tau": 0.001,
-    "updates_per_step": 2,
+    "updates_per_step": 4,
     "epsilon": 1.0,
-    "epsilon_decay": 0.99626,
+    "epsilon_decay": 0.99701,
     "epsilon_min": 0.05,
-    "buffer_size": 100000,
+    "buffer_size": 10000,
     "min_buffer_size": 500,
     "batch_size": 128,
     "huber_delta": 1.0,
@@ -442,21 +442,21 @@
       "greedy"
     ],
     "eval_seed_base": 10000,
-    "seed": 5,
+    "seed": 0,
     "checkpoint_path": null,
     "name": "stability_test"
   },
-  "fingerprint": "7adafcac3aceef8d",
-  "code_version": "63a806e8d9e4ea81",
+  "fingerprint": "edddda0090db9263",
+  "code_version": "a57072161e75e0fd",
   "eval": {
     "random": {
-      "avg_reward": -0.023199999071657658,
-      "win_rate": 45.0,
+      "avg_reward": -0.01270000010728836,
+      "win_rate": 48.0,
       "games": 100
     },
     "greedy": {
-      "avg_reward": -0.12160000100731849,
-      "win_rate": 26.0,
+      "avg_reward": -0.11459999974817038,
+      "win_rate": 22.0,
       "games": 100
     }
   }

@@ -146,7 +146,34 @@ def _cfg(config):
         raise ValueError(
             f"q_init must be one of {MLP_INIT_MODES}, got {cfg['q_init']!r}")
     cfg["train_opponent_mix"] = _resolve_opponent_mix(cfg["train_opponent_mix"])
+    _check_seed_separation(cfg)
     return cfg
+
+
+def _check_seed_separation(cfg):
+    """Raise when the training seed lands inside the eval seed range.
+
+    The two streams are separate by construction - training is seeded
+    once and never again, evaluation is pinned per episode - but they are
+    drawn from one integer line, and a training seed that collides with
+    an eval seed puts a training deal and a test deal on the same shuffle.
+    That is not a crash, it is a quiet leak of the eval set into training,
+    and the config that caused it would still be reported as clean.
+    """
+    seed, base = cfg["seed"], cfg["eval_seed_base"]
+    episodes = cfg["test_episodes_per_block"]
+    if seed is None or not episodes:
+        return
+    if not isinstance(base, int) or isinstance(base, bool):
+        raise TypeError(f"eval_seed_base must be an integer, got {base!r}")
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        raise TypeError(f"seed must be an integer or None, got {seed!r}")
+    if base <= seed < base + episodes:
+        raise ValueError(
+            f"training seed {seed} lies inside the evaluation seed range "
+            f"[{base}, {base + episodes}) - training and evaluation draw "
+            f"from one integer line, so this trains on a deck the agent is "
+            f"then scored on. Move `seed` or `eval_seed_base` apart")
 
 
 def _resolve_target_clip(cfg):
@@ -400,6 +427,10 @@ def _seed_all(seed):
     """Seed all THREE RNG streams: torch (deck order), numpy (exploration and
     random_opponent), stdlib random (replay batch composition). Seeding a
     subset is worse than seeding none, because it looks controlled.
+
+    Two callers only: `simulation()` once at the start of a run, and
+    `_seed_episode` inside a test block, whose effect never outlives the
+    block. Do not add a third in the training path.
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -409,10 +440,42 @@ def _seed_all(seed):
 def _seed_episode(seeds, itr):
     """Common random numbers: pin every stream for episode `itr` from a seed
     list, before the deal.
+
+    Called from the TEST loop only. Training never reseeds: see
+    `_rng_state` for why the two are not allowed to share a stream.
     """
     if seeds is None:
         return
     _seed_all(seeds[(itr - 1) % len(seeds)])
+
+
+def _rng_state():
+    """A snapshot of all THREE RNG streams, for the eval phase to restore.
+
+    Evaluation has to pin its streams per episode (common random numbers
+    are what make every comparison in this project paired), and training
+    must never be reseeded at all - a training stream that restarts from
+    a fixed point every time a test block fires deals the SAME hands in
+    every block after the first, which is a data-diversity bug, not a
+    reproducibility feature.
+
+    Both requirements hold at once only if the eval phase puts back what
+    it found. `run_test_simulation` snapshots here, seeds freely, and
+    restores in a `finally`, so training sees one uninterrupted stream
+    from `simulation()`'s single `_seed_all` to the end of the run and
+    the deal a training episode gets no longer depends on the eval
+    cadence, the opponent list, or how many decisions the last test game
+    happened to make.
+    """
+    return (torch.get_rng_state(), np.random.get_state(), random.getstate())
+
+
+def _restore_rng_state(state):
+    """Put back a `_rng_state` snapshot, all three streams."""
+    torch_state, numpy_state, python_state = state
+    torch.set_rng_state(torch_state)
+    np.random.set_state(numpy_state)
+    random.setstate(python_state)
 
 
 def _play_episode(ge, episode, main_player, main_policy, opponent_policy,
@@ -510,6 +573,16 @@ def run_self_play_training(config=None, epsilon=None, episodes=None,
     if replay_buffer is None:
         replay_buffer = ReplayBuffer(cfg["buffer_size"])
     block_log = ev.TrainBlockAccumulator()
+
+    # The learner is the ONLY net that is ever in training mode. A test
+    # block and `model_opponent` both put a net into eval, and a net left
+    # there is silently a different function the moment this trunk grows a
+    # dropout or batchnorm layer, so the mode is asserted here rather than
+    # assumed to have survived the previous phase.
+    online_net.train()
+    opponent_net.eval()
+    if target_net is not None:
+        target_net.eval()
 
     def main_policy(valid_x_list):
         """The learner's move: epsilon-greedy through online_net.
@@ -646,6 +719,13 @@ def run_test_simulation(net, config=None, opponents=None, episodes=None,
     COMMON RANDOM NUMBERS: seeds default to
     range(eval_seed_base, eval_seed_base + episodes) and the SAME list is
     reused for every opponent, so every comparison in the project is paired.
+    Every episode pins all three streams before its deal, so the first pin
+    lands immediately before the first test game of the phase.
+
+    RNG ISOLATION: that pinning, and any net this function builds, are
+    undone on the way out - the whole phase runs inside a snapshot taken
+    at entry (see `_rng_state`). Evaluation is reproducible AND training
+    is never reseeded, which used to be mutually exclusive here.
     """
     global target_net
 
@@ -653,27 +733,40 @@ def run_test_simulation(net, config=None, opponents=None, episodes=None,
     episodes = cfg["test_episodes_per_block"] if episodes is None else episodes
     opponents = _as_list(cfg["test_opponents"] if opponents is None else opponents)
 
-    net.eval()
-    arch = net_kwargs(cfg)
-    resolved = [_resolve_opponent(o, arch=arch) for o in opponents]
-    if target_net is None:
-        target_net = MLP(seed=cfg["seed"] if cfg["seed"] is not None else 42,
-                         **arch)
-        target_net.load_state_dict(net.state_dict())
-    target_net.eval()
+    # Everything from here to the `finally` may seed a stream or flip a
+    # net's mode: `_resolve_opponent` builds an MLP for a checkpoint path
+    # (and MLP.__init__ seeds torch GLOBALLY), `_test_block` pins all three
+    # streams before every game, and scoring needs `net` in eval. None of
+    # that is allowed to escape into the training phase, so the state is
+    # snapshotted first and put back unconditionally.
+    entry_rng = _rng_state()
+    was_training = net.training
+    try:
+        net.eval()
+        arch = net_kwargs(cfg)
+        resolved = [_resolve_opponent(o, arch=arch) for o in opponents]
+        if target_net is None:
+            target_net = MLP(seed=cfg["seed"] if cfg["seed"] is not None else 42,
+                             **arch)
+            target_net.load_state_dict(net.state_dict())
+        target_net.eval()
 
-    if seeds is None:
-        seeds = list(range(cfg["eval_seed_base"], cfg["eval_seed_base"] + episodes))
+        if seeds is None:
+            seeds = list(
+                range(cfg["eval_seed_base"], cfg["eval_seed_base"] + episodes))
 
-    records = {}
-    for policy, label in resolved:
-        if label in records:
-            raise ValueError(
-                f"two test opponents resolved to the same label {label!r} - "
-                f"the second block would overwrite the first, and the config "
-                f"would silently be measured against one fewer baseline")
-        records[label] = _test_block(net, cfg, policy, label, episodes, seeds,
-                                     block=block, episode=episode)
+        records = {}
+        for policy, label in resolved:
+            if label in records:
+                raise ValueError(
+                    f"two test opponents resolved to the same label {label!r} - "
+                    f"the second block would overwrite the first, and the config "
+                    f"would silently be measured against one fewer baseline")
+            records[label] = _test_block(net, cfg, policy, label, episodes, seeds,
+                                         block=block, episode=episode)
+    finally:
+        net.train(was_training)
+        _restore_rng_state(entry_rng)
     return records
 
 
@@ -709,9 +802,16 @@ def simulation(config):
 
     cfg = _cfg(config)
 
+    # Nets FIRST, then the one and only seeding of the run. MLP.__init__
+    # calls torch.manual_seed itself, so building three nets resets the
+    # torch stream three times; seeding after them means the training
+    # stream starts at exactly `seed` instead of at whatever the last
+    # weight draw left behind. The weights are unaffected - each MLP seeds
+    # itself - and from this line to the end of the run NOTHING reseeds
+    # training. Test blocks pin and restore their own streams.
+    online_net, opponent_net, target_net = _build_nets(cfg)
     if cfg["seed"] is not None:
         _seed_all(cfg["seed"])
-    online_net, opponent_net, target_net = _build_nets(cfg)
 
     run_log = ev.RunLog()
     epsilon = cfg["epsilon"]

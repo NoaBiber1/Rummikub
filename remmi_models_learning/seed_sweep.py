@@ -70,11 +70,11 @@ BASE_CONFIG = dict(
     gamma=0.97,
     lr=3e-4,
     tau=0.001,
-    updates_per_step=2,
+    updates_per_step=4,
     epsilon=1.0,
-    epsilon_decay=0.99626,
+    epsilon_decay=0.99701,
     epsilon_min=0.05,
-    buffer_size=100000,
+    buffer_size=10000,
 
     # The three brakes, all previously absent. A SAFETY NET, not a cure:
     # measured, they are INERT in the normal regime (TD errors ~1e-5, so
