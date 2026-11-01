@@ -49,7 +49,9 @@ Board validation solves the same constraints over the board alone with
 fits no template the board can fill is rejected at once, before any solver
 call. Validations are memoised, and every board this solver itself produces is
 recorded as valid, since its partition was just built; in a game where those
-boards come back to the solver, the check then costs nothing.
+boards come back to the solver, the check then costs nothing. Whole positions
+are not memoised: an exact repeat of hand, board and meld state is vanishingly
+rare in real play, so such a cache would only cost memory.
 
 Solver: HiGHS, in process, through PuLP 4.2's API, with a zero MIP gap (a
 solver that stops "within tolerance" may return a non-optimal play) and
@@ -317,8 +319,8 @@ class GreedySolver:
         """Prepare the solver configuration and the static template data.
 
         Args:
-            cache_size: Number of positions, board partitions and produced
-                boards to memoise; ``0`` disables all memoisation.
+            cache_size: Number of board partitions and produced boards to
+                memoise; ``0`` disables all memoisation.
 
         Raises:
             RuntimeError: If HiGHS is not installed.
@@ -333,17 +335,14 @@ class GreedySolver:
         self._trusted = {}
         self._trusted_lock = threading.Lock()
         if cache_size:
-            self._answer = lru_cache(maxsize=cache_size)(self._compute)
             self._partition = lru_cache(maxsize=cache_size)(self._partition_board)
         else:
-            self._answer = self._compute
             self._partition = self._partition_board
 
     def cache_clear(self):
-        """Forget every memoised position, board partition and produced board."""
-        for memo in (self._answer, self._partition):
-            if hasattr(memo, "cache_clear"):
-                memo.cache_clear()
+        """Forget every memoised board partition and produced board."""
+        if hasattr(self._partition, "cache_clear"):
+            self._partition.cache_clear()
         with self._trusted_lock:
             self._trusted.clear()
 
@@ -374,7 +373,7 @@ class GreedySolver:
         hand_counts = count_types(hand_types)
         board_counts = count_types(board_types)
         check_copy_limits(hand_counts, board_counts)
-        answer = self._answer(tuple(board_counts), tuple(hand_counts), bool(first_meld))
+        answer = self._compute(tuple(board_counts), tuple(hand_counts), bool(first_meld))
         if answer is None:
             return DRAW
         played, layouts = answer

@@ -2,12 +2,11 @@
 
 Positions are harvested from complete greedy-versus-greedy games, so they
 cover the whole game from opening melds to crowded late-game tables. The
-script then times three situations:
+script then times two situations:
 
 * cold: every cache off, so each call also solves the board-validation model;
 * in game: positions replayed in order with caches on, so a board this solver
-  produced on the previous turn is trusted without re-validation;
-* repeat: every position asked a second time, served from the memo.
+  produced on the previous turn is trusted without re-validation.
 
 Run with ``python bench_rummikub_greedy.py [games] [seed]``.
 """
@@ -82,7 +81,7 @@ def report(label, times):
 
 
 def main():
-    """Harvest positions, time the three situations, and print a summary table."""
+    """Harvest positions, time the two situations, and print a summary table."""
     games = int(sys.argv[1]) if len(sys.argv) > 1 else 20
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     positions = harvest(games, seed)
@@ -93,9 +92,7 @@ def main():
     )
     print(f"{'':10s}{'mean':>8s}{'median':>8s}{'p95':>8s}{'p99':>8s}{'max':>8s}   ms/position")
     report("cold", timings(GreedySolver(cache_size=0), positions))
-    engine = GreedySolver()
-    report("in game", timings(engine, positions))
-    report("repeat", timings(engine, positions))
+    report("in game", timings(GreedySolver(), positions))
 
 
 if __name__ == "__main__":

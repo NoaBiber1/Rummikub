@@ -519,18 +519,7 @@ class BoardValidation(unittest.TestCase):
 
 
 class Memoisation(unittest.TestCase):
-    """The caches must be invisible to callers."""
-
-    def test_cached_answers_are_independent(self):
-        """Mutating a returned answer never leaks into a later identical call."""
-        solver = GreedySolver()
-        hand = [(5, R), (6, R), (7, R)]
-        first = solver.solve(hand, [])
-        first.sBoard.clear()
-        first.hand.append("junk")
-        second = solver.solve(hand, [])
-        self.assertEqual(second.sBoard, [[(5, R), (6, R), (7, R)]])
-        self.assertEqual(second.hand, [])
+    """The board-validation caches must be invisible to callers."""
 
     def test_uncached_solver_matches_cached(self):
         """Disabling the caches changes nothing about the answers."""
