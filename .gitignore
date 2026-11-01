@@ -119,7 +119,8 @@ app.*.symbols
 !/dev/ci/**/Gemfile.lock
 
 .cursor
-for_claude.md
+for_developer.md
 __pycache__/
-run.py
 plots/
+run.py
+checkpoints/
