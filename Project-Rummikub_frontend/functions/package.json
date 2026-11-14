@@ -1,0 +1,13 @@
+{
+  "name": "rummikub-vision-proxy",
+  "description": "Same-origin proxy from Firebase Hosting to Roboflow Workflows",
+  "private": true,
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^6.3.2"
+  }
+}
